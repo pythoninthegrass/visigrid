@@ -1412,6 +1412,31 @@ impl Spreadsheet {
         self.recent_files.truncate(MAX_RECENT);
     }
 
+    /// Per-sheet presentation state in the visigrid-json layout form, so a
+    /// cloud upload is `export_workbook` rather than the SQLite file on disk.
+    pub(crate) fn build_json_sheet_layouts(&self, cx: &App) -> Vec<json::SheetLayout> {
+        self.wb(cx)
+            .sheets()
+            .iter()
+            .map(|sheet| {
+                let mut layout = json::SheetLayout::default();
+                if let Some(widths) = self.col_widths.get(&sheet.id) {
+                    layout.col_widths = widths.iter().map(|(&k, &v)| (k, v)).collect();
+                }
+                if let Some(heights) = self.row_heights.get(&sheet.id) {
+                    layout.row_heights = heights.iter().map(|(&k, &v)| (k, v)).collect();
+                }
+                if let Some(rows) = self.hidden_rows.get(&sheet.id) {
+                    layout.hidden_rows = rows.iter().copied().collect();
+                }
+                if let Some(cols) = self.hidden_cols.get(&sheet.id) {
+                    layout.hidden_cols = cols.iter().copied().collect();
+                }
+                layout
+            })
+            .collect()
+    }
+
     /// Build a SheetLayout from the app's col_widths/row_heights (SheetId-keyed)
     /// mapped to sheet_idx for database storage.
     fn build_sheet_layout(&self, cx: &App) -> native::SheetLayout {

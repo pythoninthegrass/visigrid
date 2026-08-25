@@ -760,6 +760,48 @@ fn sheet_body(sheet: &Sheet, layout: &SheetLayout) -> SheetBody {
     }
 }
 
+/// What a cloud blob actually is, regardless of the key's extension.
+///
+/// Both API controllers reuse `data_blob_key` when one exists, so a desktop
+/// save onto a web sheet writes SQLite (historically) to a `….json` key and a
+/// web save onto a desktop sheet writes JSON to a `….sheet` key. After any
+/// cross-client save the extension and the Content-Type lie. Callers must
+/// sniff bytes: `SQLite format 3\0` vs `{`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloudBlobKind {
+    VisigridJson,
+    NativeSqlite,
+    Unknown,
+}
+
+/// SQLite's 16-byte file header, including the trailing NUL.
+const SQLITE_HEADER: &[u8] = b"SQLite format 3\0";
+
+pub fn sniff_cloud_blob(bytes: &[u8]) -> CloudBlobKind {
+    if bytes.starts_with(SQLITE_HEADER) {
+        return CloudBlobKind::NativeSqlite;
+    }
+    let rest = skip_bom_and_ws(bytes);
+    if rest.first() == Some(&b'{') {
+        CloudBlobKind::VisigridJson
+    } else {
+        CloudBlobKind::Unknown
+    }
+}
+
+fn skip_bom_and_ws(bytes: &[u8]) -> &[u8] {
+    let bytes = if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) {
+        &bytes[3..]
+    } else {
+        bytes
+    };
+    let i = bytes
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(bytes.len());
+    &bytes[i..]
+}
+
 /// Cheap check: is this a workbook-form (version 2) document?
 /// Used by callers that want to preserve the input's form on re-export.
 pub fn is_workbook_form(content: &str) -> bool {
@@ -1620,6 +1662,21 @@ mod full_json_tests {
         assert!(import_full("[[1,2],[3,4]]").is_err());
         assert!(import_full("{\"format\":\"other\",\"version\":1}").is_err());
         assert!(import_full("{\"format\":\"visigrid-json\",\"version\":99}").is_err());
+    }
+
+    #[test]
+    fn sniff_cloud_blob_does_not_trust_the_key() {
+        let sqlite = b"SQLite format 3\0more-bytes";
+        assert_eq!(sniff_cloud_blob(sqlite), CloudBlobKind::NativeSqlite);
+
+        let json = br#"{"format":"visigrid-json","version":2,"sheets":[]}"#;
+        assert_eq!(sniff_cloud_blob(json), CloudBlobKind::VisigridJson);
+
+        let json_with_bom = [b"\xEF\xBB\xBF".as_slice(), b"\n  {\"format\":\"visigrid-json\"}"].concat();
+        assert_eq!(sniff_cloud_blob(&json_with_bom), CloudBlobKind::VisigridJson);
+
+        assert_eq!(sniff_cloud_blob(b""), CloudBlobKind::Unknown);
+        assert_eq!(sniff_cloud_blob(b"PK\x03\x04"), CloudBlobKind::Unknown);
     }
 }
 

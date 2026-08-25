@@ -24,6 +24,7 @@ pub struct SheetInfo {
     pub slug: String,
     pub byte_size: Option<i64>,
     pub last_edited_at: Option<String>,
+    pub revision: Option<i64>,
 }
 
 /// Response from the save endpoint (presigned upload URL)
@@ -32,6 +33,7 @@ pub struct SaveResponse {
     pub upload_url: String,
     pub headers: HashMap<String, String>,
     pub blob_key: String,
+    pub revision: i64,
 }
 
 impl SheetsClient {
@@ -142,7 +144,10 @@ impl SheetsClient {
         let response = self.http
             .post(&url)
             .bearer_auth(&self.token)
-            .json(&serde_json::json!({ "byte_size": byte_size }))
+            .json(&serde_json::json!({
+                "byte_size": byte_size,
+                "client_supports_complete": true,
+            }))
             .send()
             .map_err(|e| HubError::Network(e.to_string()))?;
 
@@ -163,6 +168,8 @@ impl SheetsClient {
             .ok_or_else(|| HubError::Parse("Missing blob_key".to_string()))?
             .to_string();
 
+        let revision = json["revision"].as_i64().unwrap_or(0);
+
         let headers = json["headers"].as_object()
             .map(|obj| {
                 obj.iter()
@@ -171,7 +178,33 @@ impl SheetsClient {
             })
             .unwrap_or_default();
 
-        Ok(SaveResponse { upload_url, headers, blob_key })
+        Ok(SaveResponse { upload_url, headers, blob_key, revision })
+    }
+
+    /// Confirm the presigned PUT finished so the server can move the pointer.
+    /// POST /api/desktop/sheets/:id/save_complete
+    pub fn complete_save(&self, sheet_id: i64, blob_key: &str, byte_size: u64) -> Result<i64, HubError> {
+        let url = format!("{}/api/desktop/sheets/{}/save_complete", self.api_base, sheet_id);
+
+        let response = self.http
+            .post(&url)
+            .bearer_auth(&self.token)
+            .json(&serde_json::json!({
+                "blob_key": blob_key,
+                "byte_size": byte_size,
+            }))
+            .send()
+            .map_err(|e| HubError::Network(e.to_string()))?;
+
+        let status = response.status().as_u16();
+        if !response.status().is_success() {
+            let body = response.text().unwrap_or_default();
+            return Err(HubError::Http(status, body));
+        }
+
+        let json: serde_json::Value = response.json()
+            .map_err(|e| HubError::Parse(e.to_string()))?;
+        Ok(json["revision"].as_i64().unwrap_or(0))
     }
 
     /// Get presigned download URL for sheet data.
@@ -246,5 +279,6 @@ fn parse_sheet_info(v: &serde_json::Value) -> Option<SheetInfo> {
         slug: v["slug"].as_str()?.to_string(),
         byte_size: v["byte_size"].as_i64(),
         last_edited_at: v["last_edited_at"].as_str().map(String::from),
+        revision: v["revision"].as_i64(),
     })
 }

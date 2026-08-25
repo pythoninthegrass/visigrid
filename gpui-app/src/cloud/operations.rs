@@ -7,6 +7,8 @@ use crate::app::Spreadsheet;
 use crate::cloud::{CloudIdentity, CloudSyncState};
 use crate::cloud::sheets_client::SheetsClient;
 use crate::hub::client::HubError;
+use visigrid_io::json::{self, CloudBlobKind};
+use visigrid_io::native;
 
 impl Spreadsheet {
     /// Move the current local file to cloud.
@@ -162,7 +164,7 @@ impl Spreadsheet {
 
                     if let Some(bytes) = maybe_bytes {
                         let fp = file_path.clone();
-                        if let Err(e) = smol::unblock(move || std::fs::write(&fp, bytes)).await {
+                        if let Err(e) = smol::unblock(move || materialize_cloud_blob(&fp, &bytes)).await {
                             let _ = this.update(cx, |this, cx| {
                                 this.status_message = Some(format!("Failed to write file: {}", e));
                                 cx.notify();
@@ -206,6 +208,59 @@ impl Spreadsheet {
             }
         }).detach();
     }
+}
+
+/// Write a cloud blob to a local `.sheet` file, converting visigrid-json
+/// when that's what arrived. The key's extension is not consulted — after a
+/// cross-client save it lies.
+fn materialize_cloud_blob(path: &std::path::Path, bytes: &[u8]) -> Result<(), String> {
+    match json::sniff_cloud_blob(bytes) {
+        CloudBlobKind::NativeSqlite => {
+            std::fs::write(path, bytes).map_err(|e| e.to_string())
+        }
+        CloudBlobKind::VisigridJson => {
+            let text = std::str::from_utf8(bytes).map_err(|e| e.to_string())?;
+            let (wb, layouts, _) = json::import_any(text)?;
+            native::save_workbook(&wb, path)?;
+            native::save_layout(path, &json_layouts_to_native(&layouts))?;
+            Ok(())
+        }
+        CloudBlobKind::Unknown => {
+            Err("Cloud blob is neither visigrid-json nor a native .sheet file".to_string())
+        }
+    }
+}
+
+fn json_layouts_to_native(layouts: &[json::SheetLayout]) -> native::SheetLayout {
+    let mut layout = native::SheetLayout {
+        col_widths: std::collections::HashMap::new(),
+        row_heights: std::collections::HashMap::new(),
+        hidden_rows: std::collections::HashMap::new(),
+        hidden_cols: std::collections::HashMap::new(),
+    };
+    for (idx, src) in layouts.iter().enumerate() {
+        if !src.col_widths.is_empty() {
+            layout
+                .col_widths
+                .insert(idx, src.col_widths.iter().map(|(&k, &v)| (k, v)).collect());
+        }
+        if !src.row_heights.is_empty() {
+            layout
+                .row_heights
+                .insert(idx, src.row_heights.iter().map(|(&k, &v)| (k, v)).collect());
+        }
+        if !src.hidden_rows.is_empty() {
+            layout
+                .hidden_rows
+                .insert(idx, src.hidden_rows.iter().copied().collect());
+        }
+        if !src.hidden_cols.is_empty() {
+            layout
+                .hidden_cols
+                .insert(idx, src.hidden_cols.iter().copied().collect());
+        }
+    }
+    layout
 }
 
 /// Path to the local cloud sheet cache directory.

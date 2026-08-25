@@ -50,31 +50,47 @@ impl Spreadsheet {
                 cx.notify();
             });
 
-            // Read file bytes on background thread
-            let path_clone = path.clone();
-            let file_bytes = match smol::unblock(move || std::fs::read(&path_clone)).await {
-                Ok(bytes) => bytes,
-                Err(e) => {
-                    let _ = this.update(cx, |this, cx| {
-                        this.cloud_sync_state = CloudSyncState::Error;
-                        this.cloud_last_error = Some(format!("Failed to read file: {}", e));
-                        this.status_message = Some(format!("Cloud sync error: {}", e));
-                        cx.notify();
-                    });
-                    return;
+            // Canonical cloud storage is visigrid-json, not the SQLite .sheet
+            // on disk. Reading the file would write a format the browser cannot
+            // parse, and after any cross-client save the key's extension lies.
+            let exported = this.update(cx, |this, cx| {
+                let wb = this.wb(cx).clone();
+                let layouts = this.build_json_sheet_layouts(cx);
+                let active = wb.active_sheet_index();
+                (wb, layouts, active)
+            });
+            let file_bytes = match exported {
+                Ok((wb, layouts, active)) => {
+                    match smol::unblock(move || visigrid_io::json::export_workbook(&wb, &layouts, active)).await {
+                        Ok(json) => json.into_bytes(),
+                        Err(e) => {
+                            let _ = this.update(cx, |this, cx| {
+                                this.cloud_sync_state = CloudSyncState::Error;
+                                this.cloud_last_error = Some(format!("Failed to export workbook: {}", e));
+                                this.status_message = Some(format!("Cloud sync error: {}", e));
+                                cx.notify();
+                            });
+                            return;
+                        }
+                    }
                 }
+                Err(_) => return,
             };
 
             let content_hash = hash_bytes(&file_bytes);
             let byte_size = file_bytes.len() as u64;
             let sheet_id = identity.sheet_id;
 
-            // Request presigned upload URL and upload
+            // Request presigned upload URL, PUT, then confirm so the pointer
+            // moves only after the bytes exist. A drop between save() and the
+            // PUT used to leave the row pointing at a blob that was never
+            // uploaded.
             let save_result = {
                 smol::unblock(move || {
                     let client = SheetsClient::from_saved_auth()?;
                     let save_resp = client.save_sheet(sheet_id, byte_size)?;
                     client.upload_to_url(&save_resp.upload_url, &save_resp.headers, file_bytes)?;
+                    client.complete_save(sheet_id, &save_resp.blob_key, byte_size)?;
                     Ok::<_, HubError>(())
                 }).await
             };
