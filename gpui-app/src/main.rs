@@ -355,7 +355,9 @@ fn parse_args() -> CliArgs {
 /// Parse a file:// URL to a PathBuf. Returns None for non-file URLs.
 pub(crate) fn url_to_path(url_str: &str) -> Option<std::path::PathBuf> {
     // macOS sends file:///path/to/file.xlsx
-    if let Some(path_str) = url_str.strip_prefix("file://") {
+    if let Some(rest) = url_str.strip_prefix("file://") {
+        // file:///path and file://localhost/path both occur in the wild.
+        let path_str = rest.strip_prefix("localhost").unwrap_or(rest);
         // URL-decode percent-encoded characters (e.g., %20 → space)
         let decoded = percent_decode(path_str);
         Some(std::path::PathBuf::from(decoded))
@@ -544,6 +546,9 @@ fn main() {
         crate::menu_model::debug_assert_all_accels();
 
         // Set up quit handler (save session before quit)
+        cx.on_action(|_: &actions::HideApp, cx| cx.hide());
+        cx.on_action(|_: &actions::HideOthers, cx| cx.hide_other_apps());
+        cx.on_action(|_: &actions::ShowAll, cx| cx.unhide_other_apps());
         cx.on_action(|_: &actions::Quit, cx| {
             // Save session before quitting
             cx.update_global::<SessionManager, _>(|mgr, _| {

@@ -101,7 +101,8 @@ impl Spreadsheet {
         // Remaining formats: synchronous load
         let load_start = Instant::now();
         let result: Result<Workbook, String> = match ext_lower.as_str() {
-            "sheet" => native::load_workbook(path),
+            // .vgrid is the advertised native extension; same container.
+            "sheet" | "vgrid" => native::load_workbook(path),
             _ => Err(format!("Unknown file type: {}", extension)),
         };
 

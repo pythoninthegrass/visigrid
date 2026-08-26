@@ -131,6 +131,9 @@ actions!(file, [
     ExportProvenance,  // Phase 9A: Export history as Lua script
     CloseWindow,
     Quit,
+    HideApp,
+    HideOthers,
+    ShowAll,
 ]);
 
 // View actions

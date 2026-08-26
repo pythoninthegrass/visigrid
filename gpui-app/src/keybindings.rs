@@ -289,6 +289,8 @@ pub fn register(cx: &mut App, modifier_style: ModifierStyle) {
         bindings.push(KeyBinding::new("cmd-w", CloseWindow, Some("Spreadsheet")));
         bindings.push(KeyBinding::new("cmd-m", Minimize, Some("Spreadsheet")));
         bindings.push(KeyBinding::new("cmd-q", Quit, Some("Spreadsheet")));
+        bindings.push(KeyBinding::new("cmd-h", HideApp, Some("Spreadsheet")));
+        bindings.push(KeyBinding::new("cmd-alt-h", HideOthers, Some("Spreadsheet")));
         // Window switcher: Cmd+` (backtick)
         bindings.push(KeyBinding::new("cmd-`", SwitchWindow, Some("Spreadsheet")));
 

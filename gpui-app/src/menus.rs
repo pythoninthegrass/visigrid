@@ -19,7 +19,10 @@ pub fn set_app_menus(cx: &mut App) {
                 MenuItem::separator(),
                 MenuItem::action("Preferences...", ShowPreferences),
                 MenuItem::separator(),
-                // Note: Hide/Show items would go here if GPUI supports them
+                MenuItem::action("Hide VisiGrid", HideApp),
+                MenuItem::action("Hide Others", HideOthers),
+                MenuItem::action("Show All", ShowAll),
+                MenuItem::separator(),
                 MenuItem::action("Quit VisiGrid", Quit),
             ],
             disabled: false,
