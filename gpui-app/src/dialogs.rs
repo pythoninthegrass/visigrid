@@ -1754,70 +1754,81 @@ impl Spreadsheet {
         let question = self.ask_ai.question.clone();
         let verb = self.ask_ai.verb;
 
-        // Branch on verb: InsertFormula vs Analyze
+        // Branch on verb: InsertFormula vs Analyze. The HTTP call runs on a
+        // background thread via smol::unblock — a synchronous join here
+        // would freeze the UI for up to the 60s request timeout with the
+        // spinner never painting. request_id guards against a stale
+        // response landing after cancel or a newer ask.
         match verb {
             AiVerb::InsertFormula => {
-                let result = std::thread::spawn(move || {
-                    ask_ai(&config, &question, &context)
-                }).join();
+                cx.spawn(async move |this, cx| {
+                    let result =
+                        smol::unblock(move || ask_ai(&config, &question, &context)).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.ask_ai.request_id.as_deref() != Some(request_id.as_str()) {
+                            return; // cancelled or superseded
+                        }
+                        match result {
+                            Ok(response) => {
+                                this.ask_ai.raw_response = response.raw_response.clone();
+                                this.ask_ai.explanation = Some(response.explanation);
+                                this.ask_ai.formula =
+                                    response.formula.as_ref().map(|f| f.trim().to_string());
+                                this.ask_ai.warnings.extend(response.warnings);
 
-                match result {
-                    Ok(Ok(response)) => {
-                        self.ask_ai.raw_response = response.raw_response.clone();
-                        self.ask_ai.explanation = Some(response.explanation);
-                        self.ask_ai.formula = response.formula.as_ref().map(|f| f.trim().to_string());
-                        self.ask_ai.warnings.extend(response.warnings);
+                                // Validate formula if present
+                                if let Some(formula) = this.ask_ai.formula.clone() {
+                                    match this.validate_ai_formula(&formula, cx) {
+                                        Ok(()) => {
+                                            this.ask_ai.formula_valid = true;
+                                            this.ask_ai.formula_error = None;
+                                        }
+                                        Err(e) => {
+                                            this.ask_ai.formula_valid = false;
+                                            this.ask_ai.formula_error = Some(e);
+                                        }
+                                    }
+                                }
 
-                        // Validate formula if present
-                        if let Some(ref formula) = self.ask_ai.formula {
-                            match self.validate_ai_formula(formula, cx) {
-                                Ok(()) => {
-                                    self.ask_ai.formula_valid = true;
-                                    self.ask_ai.formula_error = None;
-                                }
-                                Err(e) => {
-                                    self.ask_ai.formula_valid = false;
-                                    self.ask_ai.formula_error = Some(e);
-                                }
+                                this.ask_ai.status = AskAIStatus::Success;
+                            }
+                            Err(e) => {
+                                let error_msg = this.format_ai_error(&e);
+                                this.ask_ai.status = AskAIStatus::Error(error_msg.clone());
+                                this.ask_ai.error = Some(error_msg);
                             }
                         }
-
-                        self.ask_ai.status = AskAIStatus::Success;
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg = self.format_ai_error(&e);
-                        self.ask_ai.status = AskAIStatus::Error(error_msg.clone());
-                        self.ask_ai.error = Some(error_msg);
-                    }
-                    Err(_) => {
-                        self.ask_ai.status = AskAIStatus::Error("Request failed".to_string());
-                        self.ask_ai.error = Some("AI request failed unexpectedly. Please retry.".to_string());
-                    }
-                }
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
             AiVerb::Analyze => {
-                let result = std::thread::spawn(move || {
-                    analyze(&config, &question, &context)
-                }).join();
-
-                match result {
-                    Ok(Ok(response)) => {
-                        self.ask_ai.raw_response = response.raw_response.clone();
-                        self.ask_ai.response_text = Some(response.analysis);
-                        self.ask_ai.warnings.extend(response.warnings);
-                        // No formula, no validation — read-only contract
-                        self.ask_ai.status = AskAIStatus::Success;
-                    }
-                    Ok(Err(e)) => {
-                        let error_msg = self.format_ai_error(&e);
-                        self.ask_ai.status = AskAIStatus::Error(error_msg.clone());
-                        self.ask_ai.error = Some(error_msg);
-                    }
-                    Err(_) => {
-                        self.ask_ai.status = AskAIStatus::Error("Request failed".to_string());
-                        self.ask_ai.error = Some("AI request failed unexpectedly. Please retry.".to_string());
-                    }
-                }
+                cx.spawn(async move |this, cx| {
+                    let result =
+                        smol::unblock(move || analyze(&config, &question, &context)).await;
+                    let _ = this.update(cx, |this, cx| {
+                        if this.ask_ai.request_id.as_deref() != Some(request_id.as_str()) {
+                            return; // cancelled or superseded
+                        }
+                        match result {
+                            Ok(response) => {
+                                this.ask_ai.raw_response = response.raw_response.clone();
+                                this.ask_ai.response_text = Some(response.analysis);
+                                this.ask_ai.warnings.extend(response.warnings);
+                                // No formula, no validation — read-only contract
+                                this.ask_ai.status = AskAIStatus::Success;
+                            }
+                            Err(e) => {
+                                let error_msg = this.format_ai_error(&e);
+                                this.ask_ai.status = AskAIStatus::Error(error_msg.clone());
+                                this.ask_ai.error = Some(error_msg);
+                            }
+                        }
+                        cx.notify();
+                    });
+                })
+                .detach();
             }
         }
 
@@ -2218,9 +2229,8 @@ impl Spreadsheet {
         // Spawn background task
         cx.spawn({
             async move |this, cx| {
-                let result = std::thread::spawn(move || {
-                    call_diff_summary_ai(&config, &prompt)
-                }).join().unwrap_or_else(|_| Err("AI thread panicked".to_string()));
+                let result =
+                    smol::unblock(move || call_diff_summary_ai(&config, &prompt)).await;
 
                 let _ = this.update(cx, |this, cx| {
                     this.diff_ai_summary_loading = false;
@@ -2307,9 +2317,8 @@ impl Spreadsheet {
         // Spawn background task
         cx.spawn({
             async move |this, cx| {
-                let result = std::thread::spawn(move || {
-                    call_entry_explanation_ai(&config, &prompt)
-                }).join().unwrap_or_else(|_| Err("AI thread panicked".to_string()));
+                let result =
+                    smol::unblock(move || call_entry_explanation_ai(&config, &prompt)).await;
 
                 let _ = this.update(cx, |this, cx| {
                     this.diff_explaining_entry = None;

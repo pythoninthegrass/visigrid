@@ -879,15 +879,28 @@ impl Spreadsheet {
             "https://api.visiapi.com".to_string(),
         );
 
-        // Verify token by fetching user info (blocking HTTP in thread)
+        // Verify token off the UI thread — a synchronous join froze the
+        // window for the whole HTTP timeout with no feedback.
         let client = HubClient::new(creds.clone());
+        self.status_message = Some("Verifying token…".to_string());
+        cx.notify();
 
-        let result = std::thread::spawn(move || {
-            client.verify_token()
-        }).join();
+        cx.spawn(async move |this, cx| {
+            let result = smol::unblock(move || client.verify_token()).await;
+            let _ = this.update(cx, |this, cx| this.hub_finish_sign_in(creds, result, cx));
+        })
+        .detach();
+    }
 
+    /// Apply the outcome of async token verification.
+    fn hub_finish_sign_in(
+        &mut self,
+        creds: AuthCredentials,
+        result: Result<crate::hub::client::UserInfo, crate::hub::client::HubError>,
+        cx: &mut Context<Self>,
+    ) {
         match result {
-            Ok(Ok(user_info)) => {
+            Ok(user_info) => {
                 // Save credentials with user info
                 let mut full_creds = creds;
                 full_creds.user_slug = Some(user_info.slug.clone());
@@ -910,16 +923,12 @@ impl Spreadsheet {
                     self.hub_check_status(cx);
                 }
             }
-            Ok(Err(e)) => {
+            Err(e) => {
                 // Better error message mentioning API base
                 self.status_message = Some(format!(
                     "Token could not be verified with api.visiapi.com. Check you copied the full token. ({})",
                     e
                 ));
-                cx.notify();
-            }
-            Err(_) => {
-                self.status_message = Some("Token verification failed".to_string());
                 cx.notify();
             }
         }
