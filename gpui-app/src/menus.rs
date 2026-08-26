@@ -129,12 +129,20 @@ pub fn set_app_menus(cx: &mut App) {
         // Help menu
         Menu {
             name: "Help".into(),
-            items: vec![
-                MenuItem::action("Keyboard Shortcuts...", ShowKeyTips),
-                MenuItem::separator(),
-                MenuItem::action("About VisiGrid", ShowAbout),
-                MenuItem::action("License...", ShowLicense),
-            ],
+            items: {
+                let mut items = vec![
+                    MenuItem::action("Keyboard Shortcuts...", ShowKeyTips),
+                    MenuItem::separator(),
+                    MenuItem::action("About VisiGrid", ShowAbout),
+                ];
+                // License entry is commercial-only: shipped OSS builds don't
+                // consult a license, and a paste-a-key dialog in the MAS
+                // build reads as out-of-app purchasing (guideline 3.1.1).
+                if cfg!(feature = "commercial") {
+                    items.push(MenuItem::action("License...", ShowLicense));
+                }
+                items
+            },
             disabled: false,
         },
     ]);

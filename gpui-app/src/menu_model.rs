@@ -174,12 +174,15 @@ pub fn help_menu_entries() -> Vec<MenuEntry> {
         MenuEntry::Item { label: "About VisiGrid", shortcut: None, action: MenuAction::About, accel: None },
         MenuEntry::Separator,
     ];
-    entries.push(MenuEntry::Item {
-        label: if visigrid_license::is_pro() { "Manage License..." } else { "Enter License..." },
-        shortcut: None,
-        action: MenuAction::License,
-        accel: None,
-    });
+    // Commercial builds only — see menus.rs for rationale.
+    if cfg!(feature = "commercial") {
+        entries.push(MenuEntry::Item {
+            label: if visigrid_license::is_pro() { "Manage License..." } else { "Enter License..." },
+            shortcut: None,
+            action: MenuAction::License,
+            accel: None,
+        });
+    }
     entries
 }
 

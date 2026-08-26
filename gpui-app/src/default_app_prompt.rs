@@ -28,7 +28,8 @@ impl Spreadsheet {
                 SpreadsheetFileType::Excel => "xlsx",
                 SpreadsheetFileType::Csv => "csv",
                 SpreadsheetFileType::Tsv => "tsv",
-                SpreadsheetFileType::Native => "vgrid",
+                SpreadsheetFileType::Native => "sheet",
+                SpreadsheetFileType::NativeVgrid => "vgrid",
             }.to_string());
         }
 
@@ -40,7 +41,8 @@ impl Spreadsheet {
             SpreadsheetFileType::Excel => "xlsx",
             SpreadsheetFileType::Csv => "csv",
             SpreadsheetFileType::Tsv => "tsv",
-            SpreadsheetFileType::Native => "vgrid",
+            SpreadsheetFileType::Native => "sheet",
+            SpreadsheetFileType::NativeVgrid => "vgrid",
         }.to_string())
     }
 
@@ -107,7 +109,7 @@ impl Spreadsheet {
             SpreadsheetFileType::Excel => "xlsx",
             SpreadsheetFileType::Csv => "csv",
             SpreadsheetFileType::Tsv => "tsv",
-            SpreadsheetFileType::Native => return false,
+            SpreadsheetFileType::Native | SpreadsheetFileType::NativeVgrid => return false,
         };
 
         let settings = user_settings(cx);
