@@ -390,6 +390,46 @@ impl Spreadsheet {
         });
     }
 
+    /// Resolve the close-confirm dialog. choice: 0=Cancel, 1=Don't Save, 2=Save.
+    /// When raised by Quit (`quit_after_close`), resolution continues the
+    /// app-wide quit instead of closing this window — windows stay in the
+    /// session snapshot so relaunch restores them.
+    pub fn resolve_close_confirm(&mut self, choice: u8, window: &mut Window, cx: &mut Context<Self>) {
+        self.close_confirm_visible = false;
+        let quitting = self.quit_after_close;
+        self.quit_after_close = false;
+        match choice {
+            0 => cx.notify(), // Cancel aborts the close and any pending quit
+            1 => {
+                if quitting {
+                    // Quit discards in memory only; the file on disk is untouched.
+                    self.quit_discarded = true;
+                    cx.defer(|cx| crate::try_quit(cx));
+                    cx.notify();
+                } else {
+                    self.prepare_close(cx);
+                    window.remove_window();
+                }
+            }
+            _ => {
+                let saved = self.save_and_close(cx);
+                if quitting {
+                    if saved {
+                        cx.defer(|cx| crate::try_quit(cx));
+                    } else if self.close_after_save {
+                        // Async Save As in flight; completion resumes the quit.
+                        self.quit_after_close = true;
+                    }
+                    // else: save failed or was cancelled — quit aborts.
+                    cx.notify();
+                } else if saved {
+                    self.prepare_close(cx);
+                    window.remove_window();
+                }
+            }
+        }
+    }
+
     /// Prepare this window for closing: remove from session, unregister from registry, persist.
     /// Call before `window.remove_window()`.
     pub fn prepare_close(&mut self, cx: &mut Context<Self>) {
@@ -974,4 +1014,29 @@ mod sheet_rename_tests {
         }
         idx.min(s.len())
     }
+}
+
+/// Guard the platform close path (red traffic light, system Close).
+/// Without this, gpui answers YES to windowShouldClose and dirty
+/// windows are destroyed with no prompt.
+pub fn install_close_guard(
+    window: &gpui::Window,
+    cx: &gpui::App,
+    entity: gpui::Entity<Spreadsheet>,
+) {
+    window.on_window_should_close(cx, move |_window, cx| {
+        entity.update(cx, |this, cx| {
+            this.commit_pending_edit(cx);
+            if !this.is_modified && !this.is_dirty() {
+                // Clean: allow the close, with the same bookkeeping as Cmd+W.
+                this.prepare_close(cx);
+                true
+            } else {
+                this.close_confirm_visible = true;
+                this.close_confirm_focused = 2; // Default to Save
+                cx.notify();
+                false
+            }
+        })
+    });
 }

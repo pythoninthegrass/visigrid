@@ -919,6 +919,11 @@ pub struct Spreadsheet {
 
     // Close-window save confirmation dialog
     pub close_confirm_visible: bool,
+    /// The close-confirm dialog was raised by Quit: resolution continues
+    /// the app-wide quit instead of closing this window.
+    pub quit_after_close: bool,
+    /// User chose Don't Save during a quit review — treat as clean.
+    pub quit_discarded: bool,
     /// Focused button index: 0=Cancel, 1=Don't Save, 2=Save
     pub close_confirm_focused: u8,
 
@@ -1390,6 +1395,8 @@ impl Spreadsheet {
 
             merge_confirm: MergeConfirmState::default(),
             close_confirm_visible: false,
+            quit_after_close: false,
+            quit_discarded: false,
             close_confirm_focused: 2, // Default to Save button
 
             ai_settings: AISettingsDialogState::default(),

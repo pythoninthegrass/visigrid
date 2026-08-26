@@ -1048,9 +1048,18 @@ impl Spreadsheet {
                     let should_close = this.close_after_save && !this.is_modified;
                     this.close_after_save = false;  // Reset flag
                     if should_close {
-                        this.prepare_close(cx);
-                        Some(this.window_handle)
+                        if this.quit_after_close {
+                            // Saved as part of Quit: keep the window open in
+                            // the session; continue the app-wide quit.
+                            this.quit_after_close = false;
+                            cx.defer(|cx| crate::try_quit(cx));
+                            None
+                        } else {
+                            this.prepare_close(cx);
+                            Some(this.window_handle)
+                        }
                     } else {
+                        this.quit_after_close = false; // save failed: abort quit
                         None
                     }
                 }).ok().flatten();

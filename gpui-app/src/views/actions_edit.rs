@@ -235,25 +235,8 @@ pub(crate) fn bind(
             if this.guard_terminal_focus(window, cx, "ConfirmEdit") { return; }
             // Close-confirm dialog: Enter activates focused button
             if this.close_confirm_visible {
-                match this.close_confirm_focused {
-                    0 => {
-                        this.close_confirm_visible = false;
-                        cx.notify();
-                    }
-                    1 => {
-                        this.close_confirm_visible = false;
-                        this.prepare_close(cx);
-                        window.remove_window();
-                    }
-                    _ => {
-                        this.close_confirm_visible = false;
-                        let saved = this.save_and_close(cx);
-                        if saved {
-                            this.prepare_close(cx);
-                            window.remove_window();
-                        }
-                    }
-                }
+                let choice = this.close_confirm_focused;
+                this.resolve_close_confirm(choice, window, cx);
                 return;
             }
             if this.open_menu.is_some() {

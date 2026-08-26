@@ -96,8 +96,7 @@ pub(crate) fn handle_key_down(
     if this.close_confirm_visible {
         match event.keystroke.key.as_str() {
             "escape" => {
-                this.close_confirm_visible = false;
-                cx.notify();
+                this.resolve_close_confirm(0, window, cx);
             }
             "tab" => {
                 if event.keystroke.modifiers.shift {
@@ -108,25 +107,8 @@ pub(crate) fn handle_key_down(
                 cx.notify();
             }
             "enter" | "space" => {
-                match this.close_confirm_focused {
-                    0 => {
-                        this.close_confirm_visible = false;
-                        cx.notify();
-                    }
-                    1 => {
-                        this.close_confirm_visible = false;
-                        this.prepare_close(cx);
-                        window.remove_window();
-                    }
-                    _ => {
-                        this.close_confirm_visible = false;
-                        let saved = this.save_and_close(cx);
-                        if saved {
-                            this.prepare_close(cx);
-                            window.remove_window();
-                        }
-                    }
-                }
+                let choice = this.close_confirm_focused;
+                this.resolve_close_confirm(choice, window, cx);
             }
             _ => {}
         }

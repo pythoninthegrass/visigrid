@@ -1042,29 +1042,21 @@ fn render_close_confirm_dialog(app: &Spreadsheet, _window: &mut Window, cx: &mut
     // Footer buttons with focus ring
     let cancel_btn = Button::new("close-cancel-btn", "Cancel")
         .secondary(if focused == 0 { accent } else { panel_border }, if focused == 0 { text_primary } else { text_muted })
-        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, _, cx| {
-            this.close_confirm_visible = false;
-            cx.notify();
+        .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
+            this.resolve_close_confirm(0, window, cx);
         }));
 
     let dont_save_btn = Button::new("close-dont-save-btn", "Don't Save")
         .secondary(if focused == 1 { accent } else { panel_border }, if focused == 1 { text_primary } else { text_muted })
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-            this.close_confirm_visible = false;
-            this.prepare_close(cx);
-            window.remove_window();
+            this.resolve_close_confirm(1, window, cx);
         }));
 
     let save_btn = Button::new("close-save-btn", "Save")
         .primary(accent, rgb(0xffffff).into())
         .when(focused == 2, |b| b.border_1().border_color(hsla(0.0, 0.0, 1.0, 1.0)))
         .on_mouse_down(MouseButton::Left, cx.listener(|this, _, window, cx| {
-            this.close_confirm_visible = false;
-            let saved = this.save_and_close(cx);
-            if saved {
-                this.prepare_close(cx);
-                window.remove_window();
-            }
+            this.resolve_close_confirm(2, window, cx);
         }));
 
     let footer = div()

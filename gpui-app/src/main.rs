@@ -448,6 +448,7 @@ fn open_file_urls(urls: Vec<String>, cx: &mut App) {
                 entity.update(cx, |spreadsheet, cx| {
                     spreadsheet.register_with_window_registry(cx);
                 });
+                crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                 entity
             },
         )
@@ -549,13 +550,7 @@ fn main() {
         cx.on_action(|_: &actions::HideApp, cx| cx.hide());
         cx.on_action(|_: &actions::HideOthers, cx| cx.hide_other_apps());
         cx.on_action(|_: &actions::ShowAll, cx| cx.unhide_other_apps());
-        cx.on_action(|_: &actions::Quit, cx| {
-            // Save session before quitting
-            cx.update_global::<SessionManager, _>(|mgr, _| {
-                mgr.save_now();
-            });
-            cx.quit();
-        });
+        cx.on_action(|_: &actions::Quit, cx| cx.defer(|cx| try_quit(cx)));
 
         // Set up NewWindow handler (Ctrl+N opens a new window, not replace in-place)
         // This must be at App level because we need cx.open_window()
@@ -578,6 +573,7 @@ fn main() {
                         app.session_window_id = window_id;
                         app
                     });
+                    crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                     entity.update(cx, |spreadsheet, cx| {
                         spreadsheet.register_with_window_registry(cx);
 
@@ -630,6 +626,7 @@ fn main() {
                             app.session_window_id = window_id;
                             app
                         });
+                        crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                         entity.update(cx, |spreadsheet, cx| {
                             spreadsheet.register_with_window_registry(cx);
                         });
@@ -768,6 +765,7 @@ fn main() {
                             app
                         });
                         // Register with window registry for window switcher
+                        crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                         entity.update(cx, |spreadsheet, cx| {
                             spreadsheet.register_with_window_registry(cx);
 
@@ -822,6 +820,7 @@ fn main() {
                             app
                         });
                         // Register with window registry for window switcher
+                        crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                         entity.update(cx, |spreadsheet, cx| {
                             spreadsheet.register_with_window_registry(cx);
 
@@ -864,6 +863,7 @@ fn main() {
                         app
                     });
                     // Register with window registry for window switcher
+                    crate::sheet_ops::install_close_guard(window, cx, entity.clone());
                     entity.update(cx, |spreadsheet, cx| {
                         spreadsheet.register_with_window_registry(cx);
 
@@ -1183,4 +1183,40 @@ fn load_embedded_fonts(cx: &App) {
     cx.text_system()
         .add_fonts(fonts)
         .expect("failed to load embedded fonts");
+}
+
+/// App-wide quit with a dirty-window review: activates the first window
+/// with unsaved changes and shows its save prompt; each resolution
+/// re-enters until every window is clean (or discarded), then snapshots
+/// the session and quits. Windows are NOT closed on quit, so the session
+/// restores them on relaunch.
+pub(crate) fn try_quit(cx: &mut gpui::App) {
+    let handles: Vec<gpui::AnyWindowHandle> = cx
+        .try_global::<window_registry::WindowRegistry>()
+        .map(|r| r.windows().iter().map(|w| w.handle).collect())
+        .unwrap_or_default();
+    for handle in handles {
+        let Some(h) = handle.downcast::<app::Spreadsheet>() else {
+            continue;
+        };
+        let needs_prompt = h
+            .update(cx, |this, window, cx| {
+                this.commit_pending_edit(cx);
+                let dirty = !this.quit_discarded && (this.is_modified || this.is_dirty());
+                if dirty {
+                    this.close_confirm_visible = true;
+                    this.close_confirm_focused = 2; // Default to Save
+                    this.quit_after_close = true;
+                    window.activate_window();
+                    cx.notify();
+                }
+                dirty
+            })
+            .unwrap_or(false);
+        if needs_prompt {
+            return;
+        }
+    }
+    cx.update_global::<SessionManager, _>(|mgr, _| mgr.save_now());
+    cx.quit();
 }
