@@ -1744,28 +1744,30 @@ impl Workbook {
 
     /// Set a cell value on a specific sheet with dep tracking + recalc notification.
     /// Use this inside workbook closures where `Spreadsheet::set_cell_value()` is unavailable.
-    pub fn set_cell_value_tracked(&mut self, sheet_index: usize, row: usize, col: usize, value: &str) {
+    pub fn set_cell_value_tracked(&mut self, sheet_index: usize, row: usize, col: usize, value: &str) -> Recalculated {
         let sheet_id = match self.sheets.get(sheet_index) {
             Some(sheet) => sheet.id,
-            None => return,
+            // No such sheet: nothing written, so nothing recalculated.
+            None => return Recalculated::Cells(Vec::new()),
         };
         self.sheets[sheet_index].set_value(row, col, value);
         self.update_cell_deps(sheet_id, row, col);
         let cell_id = CellId::new(sheet_id, row, col);
-        self.note_cell_changed(cell_id);
+        self.note_cell_changed(cell_id)
     }
 
     /// Clear a cell on a specific sheet with dep tracking + recalc notification.
     /// Removes the cell entirely (including spill state), unlike set_value("").
-    pub fn clear_cell_tracked(&mut self, sheet_index: usize, row: usize, col: usize) {
+    pub fn clear_cell_tracked(&mut self, sheet_index: usize, row: usize, col: usize) -> Recalculated {
         let sheet_id = match self.sheets.get(sheet_index) {
             Some(sheet) => sheet.id,
-            None => return,
+            // No such sheet: nothing written, so nothing recalculated.
+            None => return Recalculated::Cells(Vec::new()),
         };
         self.sheets[sheet_index].clear_cell(row, col);
         self.update_cell_deps(sheet_id, row, col);
         let cell_id = CellId::new(sheet_id, row, col);
-        self.note_cell_changed(cell_id);
+        self.note_cell_changed(cell_id)
     }
 
     /// Create an RAII batch guard. Calls begin_batch() on creation, end_batch() on Drop.
@@ -1794,32 +1796,50 @@ impl Workbook {
     /// Returns the list of changed cells (empty if nested batch or no changes).
     /// Callers can use this to broadcast changes to subscribers.
     pub fn end_batch(&mut self) -> Vec<CellId> {
+        self.end_batch_outcome().written
+    }
+
+    /// End a batch and report both halves: the cells written, and the cells
+    /// re-evaluated because of them.
+    ///
+    /// `end_batch` is kept as it was — it returns the written cells, and its
+    /// callers depend on that — because the two are genuinely different
+    /// questions. "What did the user touch" drives undo and dirty-file state;
+    /// "what changed on screen as a result" drives repaint and any mirror of
+    /// the document held elsewhere. Answering the first where the second was
+    /// wanted is how a dependent silently fails to refresh.
+    pub fn end_batch_outcome(&mut self) -> BatchOutcome {
         assert!(self.batch_depth > 0, "end_batch without begin_batch");
         self.batch_depth -= 1;
         if self.batch_depth == 0 {
             let mut changed = std::mem::take(&mut self.batch_changed);
             let format_changed = std::mem::take(&mut self.batch_format_changed);
-            if !changed.is_empty() {
-                self.recalc_dirty_set(&changed);
-            }
+            let recalculated = if !changed.is_empty() {
+                self.recalc_dirty_set(&changed)
+            } else {
+                Recalculated::Cells(Vec::new())
+            };
             if !changed.is_empty() || !format_changed.is_empty() {
                 self.increment_revision();
                 changed.extend(format_changed);
-                return changed;
+                return BatchOutcome { written: changed, recalculated };
             }
         }
-        Vec::new()
+        // Nested end, or nothing happened.
+        BatchOutcome { written: Vec::new(), recalculated: Recalculated::Cells(Vec::new()) }
     }
 
     /// Record a cell change. If batching, defers recalc.
     /// If not batching, recalcs immediately and increments revision.
     /// No-op when `auto_recalc` is false (manual calculation mode).
-    pub fn note_cell_changed(&mut self, cell_id: CellId) {
+    pub fn note_cell_changed(&mut self, cell_id: CellId) -> Recalculated {
         if !self.auto_recalc {
-            return;
+            return Recalculated::Cells(Vec::new());
         }
         if self.batch_depth > 0 {
             self.batch_changed.push(cell_id);
+            // Deferred, not skipped: the batch reports the union when it closes.
+            Recalculated::Cells(Vec::new())
         } else {
             // If the changed cell is itself a formula (e.g., a newly-entered
             // cross-sheet formula), evaluate it at the workbook level. This
@@ -1832,8 +1852,9 @@ impl Workbook {
             if is_formula {
                 let _ = self.evaluate_cell(cell_id);
             }
-            self.recalc_dirty_set(&[cell_id]);
+            let recalculated = self.recalc_dirty_set(&[cell_id]);
             self.increment_revision();
+            recalculated
         }
     }
 
@@ -2042,7 +2063,7 @@ impl Workbook {
     /// evaluate it in dependency order — ordering only that subgraph, so the
     /// cost follows the size of the change rather than the size of the
     /// workbook.
-    fn recalc_dirty_set(&mut self, changed: &[CellId]) {
+    fn recalc_dirty_set(&mut self, changed: &[CellId]) -> Recalculated {
         use std::collections::VecDeque;
 
         // Test instrumentation: count recalc calls
@@ -2069,7 +2090,7 @@ impl Workbook {
         }
 
         if dirty_set.is_empty() {
-            return;
+            return Recalculated::Cells(Vec::new());
         }
 
         // 2. Clear cached values for dirty cells
@@ -2097,9 +2118,12 @@ impl Workbook {
         // cached values still stand and they impose no ordering here.
         match self.dep_graph.topo_order_subset(&dirty_set) {
             Ok(order) => {
-                for cell_id in order {
+                for &cell_id in &order {
                     let _ = self.evaluate_cell(cell_id);
                 }
+                // In evaluation order, which is the order a caller applying
+                // these downstream wants them in too.
+                Recalculated::Cells(order)
             }
             Err(_cycle) => {
                 // A circular reference among the dirty cells makes an order
@@ -2116,6 +2140,7 @@ impl Workbook {
                 // set cannot affect these cells — whatever it computed to is
                 // still cached and still correct to read.
                 self.recompute_full_ordered();
+                Recalculated::All
             }
         }
     }
@@ -2238,6 +2263,54 @@ impl Workbook {
 // =============================================================================
 // BatchGuard - RAII batch scope for Workbook
 // =============================================================================
+
+/// What a tracked edit re-evaluated.
+///
+/// The engine has always known this — `recalc_dirty_set` collects exactly the
+/// cells it is about to evaluate — and always dropped it. A caller that has to
+/// repaint a screen, or tell a subscriber what moved, was left to re-read the
+/// whole workbook and diff it, which costs the size of the document on every
+/// keystroke however small the edit. That is the same shape of waste the
+/// per-edit topological sort had, one layer up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Recalculated {
+    /// Exactly these cells were re-evaluated, in evaluation order. Does not
+    /// include the cell the caller wrote — they already know about that one.
+    Cells(Vec<CellId>),
+    /// A cycle among the dirty cells forced a full recompute, so any formula
+    /// in the workbook may have changed. Callers holding a mirror of the
+    /// document should refresh all of it rather than apply a delta.
+    All,
+}
+
+impl Recalculated {
+    /// True when nothing was re-evaluated. `All` is never empty: it means the
+    /// opposite, that the extent is unknown and everything is suspect.
+    pub fn is_empty(&self) -> bool {
+        matches!(self, Recalculated::Cells(cells) if cells.is_empty())
+    }
+
+    /// The re-evaluated cells, or `None` when the extent is the whole
+    /// workbook. Deliberately not an empty slice for `All` — that would let a
+    /// caller treat "everything changed" as "nothing changed".
+    pub fn cells(&self) -> Option<&[CellId]> {
+        match self {
+            Recalculated::Cells(cells) => Some(cells),
+            Recalculated::All => None,
+        }
+    }
+}
+
+/// The result of closing a batch: what the caller wrote, and what the engine
+/// re-evaluated because of it.
+#[derive(Debug, Clone)]
+pub struct BatchOutcome {
+    /// Cells written during the batch, plus format-only changes. This is what
+    /// `end_batch` returns on its own.
+    pub written: Vec<CellId>,
+    /// Cells re-evaluated as a consequence of those writes.
+    pub recalculated: Recalculated,
+}
 
 /// RAII guard that calls `begin_batch()` on creation and `end_batch()` on drop.
 /// Access workbook methods through the guard (implements `Deref`/`DerefMut`).
@@ -3955,6 +4028,110 @@ mod tests {
         let b2 = wb.sheet(0).unwrap().get_display(1, 1);
         assert!(b1.contains("CYCLE") || b1.contains("REF") || b1.contains("ERR"), "B1: {b1}");
         assert!(b2.contains("CYCLE") || b2.contains("REF") || b2.contains("ERR"), "B2: {b2}");
+    }
+
+    #[test]
+    fn a_tracked_write_reports_the_cells_it_recalculated() {
+        // The point of the whole exercise: a caller mirroring this document —
+        // a wasm session handing cells back to a browser, a host broadcasting
+        // to subscribers — must be able to learn what moved without re-reading
+        // the workbook and diffing it.
+        let mut wb = Workbook::new();
+        let sid = wb.sheet_id_at_idx(0).unwrap();
+
+        wb.sheet_mut(0).unwrap().set_value(0, 0, "10");     // A1
+        wb.sheet_mut(0).unwrap().set_value(0, 1, "=A1*2");  // B1
+        wb.sheet_mut(0).unwrap().set_value(0, 2, "=B1+1");  // C1
+        wb.update_cell_deps(sid, 0, 1);
+        wb.update_cell_deps(sid, 0, 2);
+        wb.recompute_full_ordered();
+
+        let recalculated = wb.set_cell_value_tracked(0, 0, 0, "20");
+
+        // In evaluation order, and the written cell is not in it: the caller
+        // wrote A1 and already knows.
+        assert_eq!(
+            recalculated,
+            Recalculated::Cells(vec![CellId::new(sid, 0, 1), CellId::new(sid, 0, 2)])
+        );
+        assert_eq!(wb.sheet(0).unwrap().get_display(0, 2), "41");
+    }
+
+    #[test]
+    fn a_write_nothing_depends_on_recalculates_nothing() {
+        let mut wb = Workbook::new();
+        wb.sheet_mut(0).unwrap().set_value(0, 0, "10");
+        wb.recompute_full_ordered();
+
+        let recalculated = wb.set_cell_value_tracked(0, 4, 4, "hello");
+
+        assert!(recalculated.is_empty());
+        assert_eq!(recalculated.cells(), Some(&[][..]));
+    }
+
+    #[test]
+    fn a_cycle_in_the_dirty_set_reports_the_extent_as_unknown() {
+        // The fallback recomputes everything, so a delta would be a lie. `All`
+        // is what tells a mirror to refresh wholesale instead.
+        let mut wb = Workbook::new();
+        let sid = wb.sheet_id_at_idx(0).unwrap();
+
+        wb.sheet_mut(0).unwrap().set_value(0, 0, "1");       // A1
+        wb.sheet_mut(0).unwrap().set_value(0, 1, "=A1+C1");  // B1 ─┐ cycle, and
+        wb.sheet_mut(0).unwrap().set_value(0, 2, "=B1");     // C1 ─┘ both dirty
+        for (r, c) in [(0, 1), (0, 2)] {
+            wb.update_cell_deps(sid, r, c);
+        }
+        wb.recompute_full_ordered();
+
+        let recalculated = wb.set_cell_value_tracked(0, 0, 0, "20");
+
+        assert_eq!(recalculated, Recalculated::All);
+        // Never mistakable for "nothing happened".
+        assert!(!recalculated.is_empty());
+        assert_eq!(recalculated.cells(), None);
+    }
+
+    #[test]
+    fn a_batch_reports_written_and_recalculated_separately() {
+        let mut wb = Workbook::new();
+        let sid = wb.sheet_id_at_idx(0).unwrap();
+
+        wb.sheet_mut(0).unwrap().set_value(0, 0, "1");      // A1
+        wb.sheet_mut(0).unwrap().set_value(1, 0, "2");      // A2
+        wb.sheet_mut(0).unwrap().set_value(0, 1, "=A1+A2"); // B1
+        wb.update_cell_deps(sid, 0, 1);
+        wb.recompute_full_ordered();
+
+        wb.begin_batch();
+        wb.set_cell_value_tracked(0, 0, 0, "10");
+        wb.set_cell_value_tracked(0, 1, 0, "20");
+        let outcome = wb.end_batch_outcome();
+
+        assert_eq!(outcome.written, vec![CellId::new(sid, 0, 0), CellId::new(sid, 1, 0)]);
+        assert_eq!(outcome.recalculated, Recalculated::Cells(vec![CellId::new(sid, 0, 1)]));
+        assert_eq!(wb.sheet(0).unwrap().get_display(0, 1), "30");
+    }
+
+    #[test]
+    fn end_batch_still_returns_only_what_was_written() {
+        // Guards the API the GUI and CLI already call. Answering "what changed
+        // on screen" where "what did the user touch" was asked would be just
+        // as wrong in the other direction.
+        let mut wb = Workbook::new();
+        let sid = wb.sheet_id_at_idx(0).unwrap();
+
+        wb.sheet_mut(0).unwrap().set_value(0, 0, "1");      // A1
+        wb.sheet_mut(0).unwrap().set_value(0, 1, "=A1*2");  // B1
+        wb.update_cell_deps(sid, 0, 1);
+        wb.recompute_full_ordered();
+
+        wb.begin_batch();
+        wb.set_cell_value_tracked(0, 0, 0, "5");
+        let written = wb.end_batch();
+
+        assert_eq!(written, vec![CellId::new(sid, 0, 0)]);
+        assert_eq!(wb.sheet(0).unwrap().get_display(0, 1), "10");
     }
 
     #[test]
