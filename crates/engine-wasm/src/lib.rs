@@ -18,33 +18,36 @@ use visigrid_engine::formula::eval::Value;
 use visigrid_engine::workbook::Workbook;
 use wasm_bindgen::prelude::*;
 
+mod session;
+pub use session::Session;
+
 #[derive(Deserialize, Clone)]
-struct InSheet {
+pub(crate) struct InSheet {
     #[serde(default)]
-    name: Option<String>,
+    pub(crate) name: Option<String>,
     #[serde(default)]
-    cells: Vec<InCell>,
+    pub(crate) cells: Vec<InCell>,
 }
 
 #[derive(Deserialize, Clone)]
-struct InCell {
-    row: usize,
-    col: usize,
-    raw: String,
+pub(crate) struct InCell {
+    pub(crate) row: usize,
+    pub(crate) col: usize,
+    pub(crate) raw: String,
 }
 
-#[derive(Serialize)]
-struct OutResult {
-    sheet: usize,
-    row: usize,
-    col: usize,
+#[derive(Serialize, Debug)]
+pub(crate) struct OutResult {
+    pub(crate) sheet: usize,
+    pub(crate) row: usize,
+    pub(crate) col: usize,
     /// Engine result as a JSON-friendly value; null when the cell evaluated
     /// to empty or to an error (see `error`).
-    value: Option<serde_json::Value>,
+    pub(crate) value: Option<serde_json::Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    error: Option<String>,
+    pub(crate) error: Option<String>,
     /// The formatted display string, for human-facing divergence messages.
-    display: String,
+    pub(crate) display: String,
 }
 
 #[derive(Serialize)]
@@ -74,7 +77,7 @@ pub fn engine_commit() -> String {
 /// Build a workbook from raw input sheets and recompute it (shared by every
 /// export). Cells are written directly onto sheets, so the dependency graph
 /// is rebuilt before the ordered recompute (io::json::import_any pattern).
-fn build_workbook(sheets: &[InSheet]) -> Workbook {
+pub(crate) fn build_workbook(sheets: &[InSheet]) -> Workbook {
     let mut wb = Workbook::new();
 
     // Workbook::new() pre-creates one sheet; grow to match, then name them.
@@ -144,6 +147,27 @@ fn build_workbook(sheets: &[InSheet]) -> Workbook {
     wb
 }
 
+/// Project one evaluated cell into the wire shape.
+///
+/// Shared by `recompute` and by `Session`, deliberately: the verify chip and a
+/// live session must describe the same cell the same way, or a divergence
+/// report and a repaint would disagree about what the engine said.
+pub(crate) fn out_result(
+    sheet_idx: usize,
+    sheet: &visigrid_engine::sheet::Sheet,
+    row: usize,
+    col: usize,
+) -> OutResult {
+    let (value, error) = match sheet.get_computed_value(row, col) {
+        Value::Number(n) => (serde_json::Number::from_f64(n).map(serde_json::Value::Number), None),
+        Value::Text(t) => (Some(serde_json::Value::String(t)), None),
+        Value::Boolean(b) => (Some(serde_json::Value::Bool(b)), None),
+        Value::Error(e) => (None, Some(e)),
+        Value::Empty => (None, None),
+    };
+    OutResult { sheet: sheet_idx, row, col, value, error, display: sheet.get_display(row, col) }
+}
+
 #[wasm_bindgen]
 pub fn recompute(input: JsValue) -> Result<JsValue, JsValue> {
     console_error_panic_hook::set_once();
@@ -169,21 +193,7 @@ fn recompute_core(sheets: &[InSheet]) -> Output {
             if !cell.raw.starts_with('=') {
                 continue;
             }
-            let (value, error) = match sheet.get_computed_value(cell.row, cell.col) {
-                Value::Number(n) => (serde_json::Number::from_f64(n).map(serde_json::Value::Number), None),
-                Value::Text(t) => (Some(serde_json::Value::String(t)), None),
-                Value::Boolean(b) => (Some(serde_json::Value::Bool(b)), None),
-                Value::Error(e) => (None, Some(e)),
-                Value::Empty => (None, None),
-            };
-            results.push(OutResult {
-                sheet: i,
-                row: cell.row,
-                col: cell.col,
-                value,
-                error,
-                display: sheet.get_display(cell.row, cell.col),
-            });
+            results.push(out_result(i, sheet, cell.row, cell.col));
         }
     }
 
