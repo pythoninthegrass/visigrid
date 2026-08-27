@@ -295,13 +295,15 @@ fn build_versus_recompute() {
 // So this times exactly that call, on an already-built workbook, and compares
 // it against the full recompute of the same fixture.
 //
-// The case that matters most is the narrow one. `recalc_dirty_set` collects a
-// dirty set and then calls `topo_order_all_formulas()` — a full topological
-// sort of EVERY formula in the workbook, on every edit, however small the
-// change. There is a TODO(perf) in workbook.rs sketching a cache for it and
-// guessing that "the BFS dirty-set collection is likely the bigger cost". A
-// one-dependent edit on a 200k workbook is the measurement that settles it:
-// the dirty set is 1, so anything the edit costs beyond trivial is the sort.
+// The case that matters most is the narrow one, and it is what this harness
+// was written to catch. `recalc_dirty_set` used to call
+// `topo_order_all_formulas()` — a full topological sort of EVERY formula in
+// the workbook — on every edit, however small the change, which cost 78 ms for
+// a ONE-dependent edit on 200k formulas. It now orders only the dirty subgraph
+// (`dep_graph::topo_order_subset`), and the same edit is ~0.002 ms and flat
+// across sizes. A one-dependent edit is the measurement that keeps it honest:
+// the dirty set is 1, so anything the edit costs beyond trivial is ordering
+// work that should not be happening.
 //
 // (An edit with NO dependents cannot isolate it — `recalc_dirty_set` returns
 // early on an empty dirty set, before the sort.)
@@ -409,7 +411,8 @@ fn single_cell_edit_on_a_resident_workbook() {
          This is the per-keystroke cost a resident workbook would pay; the phases\n\
          in the other test become per-LOAD costs once the workbook stops being\n\
          rebuilt. `dependents` is the size of the dirty set the edit triggers.\n\
-         A narrow edit that still costs a large fraction of a full recompute is\n\
-         topo_order_all_formulas() being rerun per edit (workbook.rs TODO(perf))."
+         A narrow edit should be flat across sizes. When it instead tracks the\n\
+         workbook, the ordering is being done over every formula rather than\n\
+         over the dirty set (the defect fixed in dep_graph::topo_order_subset)."
     );
 }

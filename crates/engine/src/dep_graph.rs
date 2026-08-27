@@ -624,6 +624,107 @@ impl DepGraph {
         Ok(result)
     }
 
+    /// Topologically order a subset of the formula cells.
+    ///
+    /// Same algorithm and the same deterministic tie-breaking as
+    /// [`Self::topo_order_all_formulas`], but the work is proportional to
+    /// `cells` and the edges incident to it rather than to the whole workbook.
+    ///
+    /// This exists for incremental recalculation. The caller's dirty set is a
+    /// forward closure — every transitive dependent of the cells that changed —
+    /// so it is closed under `dependents`, and a cell inside it can only be
+    /// ordered after the cells inside it that it reads. Precedents *outside*
+    /// the set are clean: their cached values are still correct, so they carry
+    /// no edge here and contribute nothing to the ordering.
+    ///
+    /// Ordering the whole workbook to place one changed cell is what made a
+    /// single-cell edit cost 78 ms on 200,000 formulas — linear in the
+    /// workbook, with a dirty set of one.
+    ///
+    /// Cells in `cells` that are not formula cells are ignored, matching
+    /// `topo_order_all_formulas`, whose domain is `preds.keys()`.
+    ///
+    /// Returns `Err` only when the cycle is *within* `cells`. A cycle
+    /// elsewhere in the workbook cannot affect this ordering and is not this
+    /// function's business.
+    pub fn topo_order_subset(
+        &self,
+        cells: &FxHashSet<CellId>,
+    ) -> Result<Vec<CellId>, CycleReport> {
+        let members: FxHashSet<CellId> =
+            cells.iter().copied().filter(|c| self.preds.contains_key(c)).collect();
+
+        if members.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // In-degree counts only precedents that are themselves in the subset.
+        let mut in_degree: FxHashMap<CellId, usize> = FxHashMap::default();
+        for &cell in &members {
+            let count = self
+                .preds
+                .get(&cell)
+                .map(|preds| preds.iter().filter(|p| members.contains(p)).count())
+                .unwrap_or(0);
+            in_degree.insert(cell, count);
+        }
+
+        let mut queue: Vec<CellId> = in_degree
+            .iter()
+            .filter(|(_, &deg)| deg == 0)
+            .map(|(&cell, _)| cell)
+            .collect();
+        // Descending, so the smallest is at the end and pops first.
+        queue.sort_by(|a, b| {
+            b.sheet
+                .raw()
+                .cmp(&a.sheet.raw())
+                .then(b.row.cmp(&a.row))
+                .then(b.col.cmp(&a.col))
+        });
+
+        let mut result = Vec::with_capacity(members.len());
+
+        while let Some(cell) = queue.pop() {
+            result.push(cell);
+
+            if let Some(deps) = self.succs.get(&cell) {
+                let mut new_zero_degree = Vec::new();
+
+                for &dep in deps {
+                    if members.contains(&dep) {
+                        if let Some(deg) = in_degree.get_mut(&dep) {
+                            *deg = deg.saturating_sub(1);
+                            if *deg == 0 {
+                                new_zero_degree.push(dep);
+                            }
+                        }
+                    }
+                }
+
+                new_zero_degree.sort_by(|a, b| {
+                    a.sheet
+                        .raw()
+                        .cmp(&b.sheet.raw())
+                        .then(a.row.cmp(&b.row))
+                        .then(a.col.cmp(&b.col))
+                });
+                for cell in new_zero_degree.into_iter().rev() {
+                    queue.push(cell);
+                }
+            }
+        }
+
+        if result.len() < members.len() {
+            let placed: FxHashSet<CellId> = result.iter().copied().collect();
+            let cycle_cells: Vec<CellId> =
+                members.iter().filter(|c| !placed.contains(c)).copied().collect();
+            return Err(CycleReport::cycle(cycle_cells));
+        }
+
+        Ok(result)
+    }
+
     /// Check if adding edges from `cell` to `new_preds` would create a cycle.
     ///
     /// Does not modify the graph. Returns `Some(CycleReport)` if a cycle would
@@ -1186,6 +1287,50 @@ mod tests {
         // Trying to make A depend on C should detect cycle
         let result = graph.would_create_cycle(a, &[c]);
         assert!(result.is_some());
+    }
+
+    #[test]
+    fn topo_order_subset_ignores_precedents_outside_the_set() {
+        // C depends on B depends on A. Only B and C are dirty; A is clean and
+        // keeps its cached value, so it must not appear in the order and must
+        // not hold B back — B has no in-subset precedent and goes first.
+        let mut graph = DepGraph::new();
+        let sheet = crate::sheet::SheetId(0);
+        let a = CellId::new(sheet, 0, 0);
+        let b = CellId::new(sheet, 1, 0);
+        let c = CellId::new(sheet, 2, 0);
+        graph.replace_edges(b, [a].into_iter().collect());
+        graph.replace_edges(c, [b].into_iter().collect());
+
+        let dirty: FxHashSet<CellId> = [b, c].into_iter().collect();
+        let order = graph.topo_order_subset(&dirty).unwrap();
+
+        assert_eq!(order, vec![b, c]);
+    }
+
+    #[test]
+    fn topo_order_subset_reports_only_a_cycle_inside_the_set() {
+        // X <-> Y is a live cycle; Z is an unrelated acyclic formula. Ordering
+        // Z alone must succeed — a cycle elsewhere in the workbook cannot
+        // affect it, and treating it as unorderable is what used to drag a
+        // full recompute behind every unrelated edit.
+        let mut graph = DepGraph::new();
+        let sheet = crate::sheet::SheetId(0);
+        let x = CellId::new(sheet, 0, 0);
+        let y = CellId::new(sheet, 1, 0);
+        let src = CellId::new(sheet, 5, 0);
+        let z = CellId::new(sheet, 2, 0);
+        graph.replace_edges(x, [y].into_iter().collect());
+        graph.replace_edges(y, [x].into_iter().collect());
+        graph.replace_edges(z, [src].into_iter().collect());
+
+        assert!(graph.topo_order_all_formulas().is_err(), "the workbook does contain a cycle");
+
+        let unrelated: FxHashSet<CellId> = [z].into_iter().collect();
+        assert_eq!(graph.topo_order_subset(&unrelated).unwrap(), vec![z]);
+
+        let inside: FxHashSet<CellId> = [x, y].into_iter().collect();
+        assert!(graph.topo_order_subset(&inside).is_err());
     }
 
     #[test]
