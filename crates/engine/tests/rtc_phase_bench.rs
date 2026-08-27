@@ -280,3 +280,136 @@ fn build_versus_recompute() {
          and this minute only; the ratios are the portable part."
     );
 }
+
+
+// =============================================================================
+// Follow-on: what a resident workbook would actually pay per keystroke.
+//
+// The first test measures the phases of today's stateless call. It answers
+// "which phase dominates" but not "is a resident workbook enough", because
+// under a resident workbook a keystroke would not call recompute_full_ordered
+// at all — it would go through the tracked-write path the desktop app already
+// uses: set_cell_value_tracked -> note_cell_changed -> recalc_dirty_set, which
+// BFSes the dirty subgraph and evaluates only that.
+//
+// So this times exactly that call, on an already-built workbook, and compares
+// it against the full recompute of the same fixture.
+//
+// The case that matters most is the narrow one. `recalc_dirty_set` collects a
+// dirty set and then calls `topo_order_all_formulas()` — a full topological
+// sort of EVERY formula in the workbook, on every edit, however small the
+// change. There is a TODO(perf) in workbook.rs sketching a cache for it and
+// guessing that "the BFS dirty-set collection is likely the bigger cost". A
+// one-dependent edit on a 200k workbook is the measurement that settles it:
+// the dirty set is 1, so anything the edit costs beyond trivial is the sort.
+//
+// (An edit with NO dependents cannot isolate it — `recalc_dirty_set` returns
+// early on an empty dirty set, before the sort.)
+
+/// Build a workbook the same way the first test does, without timing it.
+fn built(cells: &[(usize, usize, String)]) -> Workbook {
+    let mut wb = Workbook::new();
+    let (needed_rows, needed_cols) = cells
+        .iter()
+        .fold((0, 0), |(r, c), (row, col, _)| (r.max(row + 1), c.max(col + 1)));
+    {
+        let sheet = &mut wb.sheets_mut()[0];
+        sheet.rows = sheet.rows.max(needed_rows);
+        sheet.cols = sheet.cols.max(needed_cols);
+        for (row, col, raw) in cells {
+            sheet.set_value_deferred(*row, *col, raw);
+        }
+    }
+    wb.rebuild_dep_graph();
+    wb.recompute_full_ordered();
+    wb
+}
+
+#[test]
+#[ignore = "measurement, not an assertion — run explicitly with --ignored --nocapture"]
+fn single_cell_edit_on_a_resident_workbook() {
+    let sizes: Vec<usize> = std::env::var("RTC_BENCH_SIZES")
+        .ok()
+        .map(|s| s.split(',').filter_map(|x| x.trim().parse().ok()).collect())
+        .unwrap_or_else(|| vec![10_000, 50_000, 200_000]);
+    let shapes: Vec<Shape> = match std::env::var("RTC_BENCH_SHAPES").ok().as_deref() {
+        Some("cheap") => vec![Shape::Cheap],
+        Some("range") => vec![Shape::Range],
+        _ => vec![Shape::Cheap, Shape::Range],
+    };
+    let edits: usize = std::env::var("RTC_BENCH_EDITS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(11);
+
+    println!("\nedits timed per fixture: {edits} (plus one discarded)");
+    println!("engine: visigrid-engine (native, release)\n");
+    println!(
+        "{:>9}  {:>6}  {:>10}  {:>12}  {:>12}   {:>9}",
+        "formulas", "shape", "dependents", "edit", "full recalc", "edit/full"
+    );
+    println!("{}", "-".repeat(76));
+
+    for &n in &sizes {
+        for &shape in &shapes {
+            let cells = fixture(n, shape);
+            let mut wb = built(&cells);
+
+            // Edit the literal at (0, 0). Under the cheap shape exactly one
+            // formula reads it; under the range shape every formula in the
+            // first column-pair does, because they all read A1:A200.
+            let dependents = wb.dep_graph().dependent_count(
+                visigrid_engine::cell_id::CellId::new(wb.sheets()[0].id, 0, 0),
+            );
+
+            // Prove the edit actually recalculates before timing it. A silent
+            // no-op — auto_recalc off, a write that does not mark anything
+            // dirty — would otherwise be reported as a very fast keystroke.
+            let formula_cell_col = 1;
+            let before = wb.sheets()[0].get_display(0, formula_cell_col);
+            wb.set_cell_value_tracked(0, 0, 0, "7777");
+            let after = wb.sheets()[0].get_display(0, formula_cell_col);
+            assert_ne!(
+                before, after,
+                "the tracked write did not recalculate its dependent — timing it would be meaningless"
+            );
+
+            let mut samples = Vec::with_capacity(edits);
+            for i in 0..=edits {
+                // Alternate the value so no write can be skipped as a no-op.
+                let v = format!("{}", 1000 + i);
+                let t = Instant::now();
+                wb.set_cell_value_tracked(0, 0, 0, &v);
+                let dt = t.elapsed();
+                if i > 0 {
+                    samples.push(ms(dt));
+                }
+            }
+            let edit_ms = median(samples);
+
+            // Same workbook, for a like-for-like comparison in the same round.
+            let t = Instant::now();
+            wb.recompute_full_ordered();
+            let full_ms = ms(t.elapsed());
+
+            println!(
+                "{:>9}  {:>6}  {:>10}  {:>10.3}ms  {:>10.1}ms   {:>8.1}%",
+                n,
+                shape.label(),
+                dependents,
+                edit_ms,
+                full_ms,
+                edit_ms / full_ms * 100.0
+            );
+        }
+    }
+
+    println!(
+        "\nedit = set_cell_value_tracked on one literal, median of per-edit times.\n\
+         This is the per-keystroke cost a resident workbook would pay; the phases\n\
+         in the other test become per-LOAD costs once the workbook stops being\n\
+         rebuilt. `dependents` is the size of the dirty set the edit triggers.\n\
+         A narrow edit that still costs a large fraction of a full recompute is\n\
+         topo_order_all_formulas() being rerun per edit (workbook.rs TODO(perf))."
+    );
+}
