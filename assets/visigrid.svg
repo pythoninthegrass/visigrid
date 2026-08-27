@@ -1,4 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" shape-rendering="crispEdges" aria-label="VisiGrid mark">
-  <rect x="8" y="8" width="30" height="48" fill="#3f3f46"/>
-  <rect x="40" y="8" width="16" height="48" fill="#3f3f46"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="VisiGrid mark">
+  <g fill="#3f3f46">
+    <path d="M76,0 H228 V172 L172,228 H0 V76 A76,76 0 0 1 76,0 Z"/>
+    <path d="M284,0 H436 A76,76 0 0 1 512,76 V228 H340 L284,172 V0 Z"/>
+    <path d="M0,284 H172 L228,340 V512 H76 A76,76 0 0 1 0,436 V284 Z"/>
+    <path d="M340,284 H512 V436 A76,76 0 0 1 436,512 H284 V340 L340,284 Z"/>
+  </g>
 </svg>
