@@ -400,6 +400,9 @@ pub fn open_switcher(cx: &mut App, current_window: AnyWindowHandle) {
             show: true,
             kind: WindowKind::PopUp,
             is_movable: false,
+            // Same identity as the main window so the switcher groups with the
+            // app rather than showing up as a stray anonymous surface.
+            app_id: Some(crate::app_id()),
             ..Default::default()
         },
         move |window, cx| cx.new(|cx| WindowSwitcher::new(window, cx, current_window)),

@@ -110,6 +110,40 @@ const FALLBACK_WINDOW_SIZE: Size<Pixels> = Size {
 /// Margin from screen edges for default window placement
 const WINDOW_MARGIN: f32 = 24.0;
 
+/// The app_id native packages advertise. Must stay in agreement with both the
+/// basename of `assets/visigrid.desktop` and its `StartupWMClass` key — see
+/// `app_id_tests`, which enforces that.
+const DEFAULT_APP_ID: &str = "visigrid";
+
+/// The Wayland `xdg_toplevel` app_id / X11 `WM_CLASS` our windows advertise.
+///
+/// Compositors match this against a desktop entry to find our icon, and users
+/// match it in window rules (`class:visigrid` in Hyprland/sway). Leaving it
+/// unset makes every window anonymous: no icon in docks or alt-tab, no way to
+/// write a rule for it, and `StartupWMClass=visigrid` in the desktop entry has
+/// nothing to bind to. gpui only sends `set_app_id` when this is `Some`, and
+/// on X11 that same call is what writes `WM_CLASS` — so leaving it `None`
+/// costs us the identity on both backends, not just Wayland.
+fn app_id() -> String {
+    resolve_app_id(std::env::var("FLATPAK_ID").ok().as_deref())
+}
+
+/// Pick the app_id given the ambient `FLATPAK_ID`.
+///
+/// The value has to agree with the basename of the *installed* desktop entry,
+/// and we ship two of those: native packages install `visigrid.desktop`, while
+/// the Flatpak manifest renames the very same file to `${FLATPAK_ID}.desktop`.
+/// Flatpak exports FLATPAK_ID into the sandbox, so deferring to it hands each
+/// package the identity its own desktop entry already claims, instead of
+/// making one of the two wrong.
+fn resolve_app_id(flatpak_id: Option<&str>) -> String {
+    flatpak_id
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .unwrap_or(DEFAULT_APP_ID)
+        .to_string()
+}
+
 /// Get the work area (visible bounds excluding dock/menubar) for the primary display.
 /// Returns None if no displays are available.
 fn get_work_area(cx: &App) -> Option<Bounds<Pixels>> {
@@ -259,6 +293,7 @@ fn build_window_options(bounds: WindowBounds) -> WindowOptions {
                 traffic_light_position: Some(point(px(9.0), px(9.0))),
             }),
             window_min_size: Some(MIN_WINDOW_SIZE),
+            app_id: Some(app_id()),
             ..Default::default()
         }
     }
@@ -268,6 +303,7 @@ fn build_window_options(bounds: WindowBounds) -> WindowOptions {
         WindowOptions {
             window_bounds: Some(bounds),
             window_min_size: Some(MIN_WINDOW_SIZE),
+            app_id: Some(app_id()),
             ..Default::default()
         }
     }
@@ -1219,4 +1255,77 @@ pub(crate) fn try_quit(cx: &mut gpui::App) {
     }
     cx.update_global::<SessionManager, _>(|mgr, _| mgr.save_now());
     cx.quit();
+}
+
+/// The window identity we hand the compositor.
+///
+/// Issue #13: every window shipped without an app_id, so on Wayland the
+/// toplevel was anonymous — no icon in docks or alt-tab, and no `class:` for a
+/// Hyprland/sway window rule to match. The desktop entry has carried
+/// `StartupWMClass=visigrid` the whole time; there was simply nothing on the
+/// window side for it to bind to.
+#[cfg(test)]
+mod app_id_tests {
+    use super::{app_id, build_window_options, resolve_app_id, DEFAULT_APP_ID};
+    use gpui::{px, Bounds, Point, Size, WindowBounds};
+
+    /// Outside a Flatpak sandbox we are the native package.
+    #[test]
+    fn falls_back_to_the_native_id_when_not_in_a_flatpak() {
+        assert_eq!(resolve_app_id(None), DEFAULT_APP_ID);
+    }
+
+    /// Inside one, the manifest has already renamed our desktop entry to
+    /// `${FLATPAK_ID}.desktop`, so that is the identity we have to claim.
+    #[test]
+    fn defers_to_flatpak_id_inside_a_sandbox() {
+        assert_eq!(
+            resolve_app_id(Some("app.visigrid.VisiGrid")),
+            "app.visigrid.VisiGrid"
+        );
+    }
+
+    /// An exported-but-empty FLATPAK_ID would otherwise reintroduce the exact
+    /// bug we are fixing: an app_id of "" is as anonymous as none at all.
+    #[test]
+    fn an_empty_flatpak_id_is_not_an_identity() {
+        assert_eq!(resolve_app_id(Some("")), DEFAULT_APP_ID);
+        assert_eq!(resolve_app_id(Some("   ")), DEFAULT_APP_ID);
+    }
+
+    /// The regression guard proper. Every spreadsheet window is opened through
+    /// `build_window_options`, so if it ever goes back to `None` the app goes
+    /// back to being unidentifiable on Wayland and X11 alike.
+    #[test]
+    fn every_window_we_open_carries_an_app_id() {
+        let bounds = WindowBounds::Windowed(Bounds {
+            origin: Point::new(px(0.0), px(0.0)),
+            size: Size { width: px(1200.0), height: px(800.0) },
+        });
+        let options = build_window_options(bounds);
+        assert_eq!(
+            options.app_id.as_deref(),
+            Some(app_id().as_str()),
+            "window options must advertise an app_id; leaving it None is issue #13"
+        );
+    }
+
+    /// The identity is only useful if the compositor can resolve it back to a
+    /// desktop entry. That lookup goes through the entry's basename and its
+    /// StartupWMClass, so a rename on either side silently breaks the icon
+    /// again — with the app still building and running fine. Pin them together.
+    #[test]
+    fn the_native_id_matches_the_desktop_entry_it_has_to_resolve_to() {
+        let entry = include_str!("../../assets/visigrid.desktop");
+        let declared = entry
+            .lines()
+            .find_map(|line| line.strip_prefix("StartupWMClass="))
+            .map(str::trim)
+            .expect("visigrid.desktop must declare StartupWMClass");
+        assert_eq!(
+            declared, DEFAULT_APP_ID,
+            "StartupWMClass in visigrid.desktop and DEFAULT_APP_ID must agree, \
+             or the compositor cannot match our window to its icon"
+        );
+    }
 }
