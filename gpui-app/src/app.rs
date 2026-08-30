@@ -1116,7 +1116,12 @@ impl Spreadsheet {
             recent_commands: Vec::new(),
             document_meta: DocumentMeta::default(),
             cached_title: None,
-            pending_title_refresh: false,
+            // Armed so the first render titles the window. Without this a
+            // freshly-opened window stays nameless in alt-tab and the taskbar
+            // until some edit action happens to set the flag — the document
+            // already has a name (`next_book_name()`) from the moment it
+            // exists, so there is nothing to wait for.
+            pending_title_refresh: true,
             focus_handle,
             console_focus_handle,
             terminal_focus_handle,

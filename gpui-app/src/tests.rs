@@ -3962,3 +3962,53 @@ fn transform_would_alter_formula_text() {
     assert_eq!(TransformOp::Uppercase.transform("=sum(a1:b2)"), Some("=SUM(A1:B2)".to_string()));
     assert_eq!(TransformOp::Lowercase.transform("=SUM(A1:B2)"), Some("=sum(a1:b2)".to_string()));
 }
+
+// =============================================================================
+// Window title on a freshly-opened window
+// =============================================================================
+
+/// A new window must arrive already named.
+///
+/// The title pipeline is sound — `update_title_if_needed` is the single
+/// sanctioned writer, and it renders `display_name` plus the dirty/unsaved/
+/// read-only suffixes. But render only invokes it when `pending_title_refresh`
+/// is set, and that flag used to start out `false`. The result: a window that
+/// had not yet been edited carried NO title at all in alt-tab, the taskbar, or
+/// VisiGrid's own window switcher. A file-backed window was fine, because
+/// loading a file invalidates the title cache and arms the flag on the way
+/// through; only fresh windows were nameless.
+#[test]
+fn a_fresh_window_arms_its_title_refresh() {
+    let app_source = include_str!("app.rs");
+    assert!(
+        app_source.contains("pending_title_refresh: true,"),
+        "the Spreadsheet initializer must arm pending_title_refresh, or the \
+         first render never titles the window and a fresh window stays nameless"
+    );
+}
+
+/// The flag is only worth arming if there is a name ready when it fires.
+///
+/// A brand-new document is named by `next_book_name()` from the moment it
+/// exists, so the title does not have to wait on a save or a file load. This
+/// pins that a default document renders a real title rather than an empty
+/// string — an empty one would leave the window just as anonymous as before,
+/// with the flag doing its job and nothing to show for it.
+#[test]
+fn a_brand_new_document_already_has_a_title_to_show() {
+    use crate::rewind_state::DocumentMeta;
+
+    let title = DocumentMeta::default().title_string(false);
+    assert!(
+        !title.trim().is_empty(),
+        "a default document must produce a non-empty title, got {title:?}"
+    );
+    assert!(
+        title.starts_with("Book"),
+        "a never-saved document should be titled BookN, got {title:?}"
+    );
+    assert!(
+        title.contains("unsaved"),
+        "a never-saved document should say so in its title, got {title:?}"
+    );
+}
