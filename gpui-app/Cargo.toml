@@ -37,8 +37,13 @@ visigrid-io = { workspace = true }
 visigrid-config = { workspace = true }
 visigrid-license = { workspace = true }
 
-# gpui (pinned to Zed v1.12.0 — verified on Linux/Wayland; macOS Tahoe/Metal
-# needs a verification pass before next release)
+# gpui — VisiGrid/zed fork: upstream v1.12.x stable (f96212f2c5) plus one
+# commit dropping private CGS blur APIs for Mac App Store compliance.
+# Bumping is a rebase of that commit onto a newer base, not a rev change,
+# and the fork mirror itself trails upstream — sync it first.
+# Verified on Linux/Wayland. macOS Tahoe/Metal is NOT verified: 0.30.0 is
+# the first release carrying the CGS blur removal, so check window chrome
+# on a real Mac — CI proves the DMG builds, not that it renders.
 gpui = { git = "https://github.com/VisiGrid/zed", rev = "218fb58d83" }
 gpui_platform = { git = "https://github.com/VisiGrid/zed", rev = "218fb58d83", features = ["wayland", "x11", "font-kit"] }
 
