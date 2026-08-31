@@ -57,6 +57,30 @@ jobs:
             }
           }
 
+      # wingetcreate opens its PR *through* a fork of microsoft/winget-pkgs.
+      # When that fork has drifted behind upstream the submit dies on its last
+      # step — "The forked repository could not be synced with the upstream
+      # commits" — after the manifest has already been generated and validated,
+      # so the log reads healthy right up until it fails. It bit 0.30.0 despite
+      # being a documented manual step, which is the argument for doing it here
+      # instead of relying on someone remembering it mid-release.
+      - name: Sync winget-pkgs fork
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.WINGET_GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Derive the owner from the token rather than hardcoding it, so the
+          # step keeps working if the submitting account ever changes.
+          fork_owner="$(gh api user -q .login)"
+          fork="${fork_owner}/winget-pkgs"
+          if gh repo view "$fork" >/dev/null 2>&1; then
+            echo "Syncing $fork with microsoft/winget-pkgs"
+            gh repo sync "$fork" --source microsoft/winget-pkgs
+          else
+            echo "No $fork yet — wingetcreate will fork on first submit."
+          fi
+
       - name: Submit to winget-pkgs
         shell: pwsh
         env:
