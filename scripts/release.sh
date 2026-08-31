@@ -32,6 +32,7 @@ die() { red "ERROR: $*" >&2; exit 1; }
 # Set when a post-publish step fails. The run continues so the summary can
 # report what landed, then exits non-zero.
 AUR_FAILED=false
+WINGET_FAILED=false
 # Computed in phase 5. Declared here so the summary can quote it without
 # depending on how far the run got — under `set -u` an unset variable there
 # would abort the very report that explains what went wrong.
@@ -332,12 +333,56 @@ fi
 bold "=== Phase 6: Verify ==="
 
 if $DRY_RUN; then
-    yellow "[dry-run] Would verify Homebrew and AUR versions."
+    yellow "[dry-run] Would verify Homebrew, Winget and AUR."
 else
     bold "Checking Homebrew..."
     sleep 30  # Give the workflow time to run
     BREW_STATUS="$(gh run list --repo "$HOMEBREW_REPO" --limit=1 --json status,conclusion --jq '.[0].conclusion' 2>/dev/null || echo "unknown")"
     echo "Homebrew workflow conclusion: $BREW_STATUS"
+
+    # Winget fires on release publish and nothing downstream waits on it, so
+    # until now a fully green run of this script said nothing whatsoever about
+    # whether Winget succeeded — v0.30.0 published with every channel reported
+    # healthy while its Winget job had already failed. Verify it here.
+    #
+    # The job waits on CDN propagation of the release asset before it submits
+    # (up to ~10 minutes), so poll rather than reading once. Success means the
+    # pull request was opened; the upstream merge is Microsoft's validation
+    # pipeline and takes hours to days, which is not this script's business.
+    # Select the run by TAG, not "the most recent run". Right after publish our
+    # run may not exist yet, and --limit=1 would hand back the previous
+    # release's successful run — reporting a green Winget for a release whose
+    # job had not even started. That is the same shape of wrong-in-a-
+    # predictable-direction check the AUR poll below was written to avoid.
+    bold "Checking Winget (its job waits on the release asset first)..."
+    WINGET_STATUS="unknown"
+    for _ in $(seq 1 30); do
+        WINGET_JSON="$(gh run list --repo "$GITHUB_REPO" --workflow=update-winget.yml \
+            --limit=10 --json headBranch,status,conclusion 2>/dev/null || echo '[]')"
+        WINGET_RUN="$(echo "$WINGET_JSON" | jq -c --arg tag "v$VERSION" \
+            'map(select(.headBranch == $tag)) | .[0] // empty')"
+        if [[ -n "$WINGET_RUN" ]]; then
+            WINGET_STATUS="$(echo "$WINGET_RUN" | jq -r '.conclusion // "unknown"')"
+            [[ "$(echo "$WINGET_RUN" | jq -r '.status')" == "completed" ]] && break
+        fi
+        sleep 30
+    done
+
+    if [[ "$WINGET_STATUS" == "success" ]]; then
+        echo "Winget workflow conclusion: success"
+    elif [[ "$WINGET_STATUS" == "unknown" ]]; then
+        yellow "No completed Winget run for v$VERSION after 15 minutes — check by hand:"
+        yellow "  https://github.com/$GITHUB_REPO/actions/workflows/update-winget.yml"
+    else
+        WINGET_FAILED=true
+        red "Winget job did not succeed (conclusion: $WINGET_STATUS)."
+        red "The release itself is fine; only the Winget submission failed."
+        red "The usual cause is a stale fork of microsoft/winget-pkgs. To recover:"
+        echo ""
+        echo "  gh repo sync \$(gh api user -q .login)/winget-pkgs --source microsoft/winget-pkgs"
+        echo "  gh run rerun \$(gh run list --repo $GITHUB_REPO --workflow=update-winget.yml --limit=1 --json databaseId --jq '.[0].databaseId') --repo $GITHUB_REPO --failed"
+        echo ""
+    fi
 
     if $IS_LINUX && ! $AUR_FAILED; then
         # The AUR's RPC lags a successful push by a few minutes, so a single
@@ -395,6 +440,13 @@ if $AUR_FAILED; then
     echo "  git add PKGBUILD .SRCINFO && git commit -m 'Bump to v$VERSION' && git push"
     echo ""
     red "Exiting non-zero: the release succeeded, this run did not fully complete."
+    exit 1
+fi
+
+if $WINGET_FAILED; then
+    echo ""
+    red "Exiting non-zero: the release published, but Winget did not. Recovery"
+    red "steps are printed above; every other channel is current."
     exit 1
 fi
 
