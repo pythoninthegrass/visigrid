@@ -68,10 +68,10 @@ enum Commands {
     /// Evaluate a spreadsheet formula against data read from stdin
     #[command(after_help = "\
 Examples:
-  cat sales.csv | visigrid calc '=SUM(B:B)' -f csv
-  cat data.csv | visigrid calc '=AVERAGE(A:A)' -f csv --headers
-  echo '1,2,3' | visigrid calc '=SUM(A1:C1)' -f csv
-  cat matrix.csv | visigrid calc '=MMULT(A:B,D:E)' -f csv --spill csv")]
+  cat sales.csv | vgrid calc '=SUM(B:B)' -f csv
+  cat data.csv | vgrid calc '=AVERAGE(A:A)' -f csv --headers
+  echo '1,2,3' | vgrid calc '=SUM(A1:C1)' -f csv
+  cat matrix.csv | vgrid calc '=MMULT(A:B,D:E)' -f csv --spill csv")]
     Calc {
         /// Formula to evaluate (must start with =)
         formula: String,
@@ -104,14 +104,14 @@ Examples:
     /// Convert between file formats
     #[command(after_help = "\
 Examples:
-  visigrid convert data.xlsx -t csv
-  visigrid convert data.xlsx -t json -o data.json
-  cat data.csv | visigrid convert -f csv -t json
-  visigrid convert report.xlsx -t csv -o - | head -5
-  visigrid convert data.csv -t csv --headers --where 'Status=Pending'
-  visigrid convert data.csv -t csv --headers --where 'Amount<0'
-  visigrid convert data.csv -t csv --headers --select 'Invoice,Total,Status'
-  visigrid convert data.csv -t csv --headers --select Invoice --select Total")]
+  vgrid convert data.xlsx -t csv
+  vgrid convert data.xlsx -t json -o data.json
+  cat data.csv | vgrid convert -f csv -t json
+  vgrid convert report.xlsx -t csv -o - | head -5
+  vgrid convert data.csv -t csv --headers --where 'Status=Pending'
+  vgrid convert data.csv -t csv --headers --where 'Amount<0'
+  vgrid convert data.csv -t csv --headers --select 'Invoice,Total,Status'
+  vgrid convert data.csv -t csv --headers --select Invoice --select Total")]
     Convert {
         /// Input file (omit to read from stdin)
         input: Option<PathBuf>,
@@ -172,11 +172,11 @@ Examples:
     /// Replay a provenance script
     #[command(after_help = "\
 Examples:
-  visigrid replay script.lua
-  visigrid replay script.lua --verify
-  visigrid replay script.lua -o result.csv
-  visigrid replay script.lua -o - -f json | jq .
-  visigrid replay script.lua --fingerprint")]
+  vgrid replay script.lua
+  vgrid replay script.lua --verify
+  vgrid replay script.lua -o result.csv
+  vgrid replay script.lua -o - -f json | jq .
+  vgrid replay script.lua --fingerprint")]
     Replay {
         /// Path to the Lua provenance script
         script: PathBuf,
@@ -222,14 +222,14 @@ Exit code 1 indicates material differences: missing rows or value diffs outside 
 tolerance. Within-tolerance diffs are reported but do not cause a non-zero exit.
 
 Examples:
-  visigrid diff old.csv new.csv --key id
-  visigrid diff old.csv new.csv --key name --tolerance 0.01
-  visigrid diff old.csv new.csv --key sku --out csv --output diffs.csv
-  visigrid diff old.csv new.csv --key id --compare price,quantity
-  visigrid diff old.csv new.csv --key name --match contains
-  visigrid diff stripe.csv qbo.csv --key effective_date --key amount_minor
-  cat export.csv | visigrid diff - baseline.csv --key id
-  docker exec db dump | visigrid diff expected.csv - --key sku")]
+  vgrid diff old.csv new.csv --key id
+  vgrid diff old.csv new.csv --key name --tolerance 0.01
+  vgrid diff old.csv new.csv --key sku --out csv --output diffs.csv
+  vgrid diff old.csv new.csv --key id --compare price,quantity
+  vgrid diff old.csv new.csv --key name --match contains
+  vgrid diff stripe.csv qbo.csv --key effective_date --key amount_minor
+  cat export.csv | vgrid diff - baseline.csv --key id
+  docker exec db dump | vgrid diff expected.csv - --key sku")]
     Diff {
         /// Left dataset (file path, or - for stdin)
         left: String,
@@ -331,8 +331,8 @@ Examples:
     /// List running VisiGrid sessions
     #[command(after_help = "\
 Examples:
-  visigrid sessions
-  visigrid sessions --json")]
+  vgrid sessions
+  vgrid sessions --json")]
     Sessions {
         /// Output as JSON
         #[arg(long)]
@@ -342,9 +342,9 @@ Examples:
     /// Connect to a running session and show status
     #[command(after_help = "\
 Examples:
-  visigrid attach
-  visigrid attach --session abc123
-  VISIGRID_SESSION_TOKEN=xxx visigrid attach --session abc123")]
+  vgrid attach
+  vgrid attach --session abc123
+  VISIGRID_SESSION_TOKEN=xxx vgrid attach --session abc123")]
     Attach {
         /// Session ID (prefix match supported; auto-selects if only one session)
         #[arg(long)]
@@ -354,11 +354,11 @@ Examples:
     /// Apply operations to a running session
     #[command(after_help = "\
 Examples:
-  visigrid apply ops.jsonl
-  visigrid apply --session abc123 ops.jsonl
-  cat ops.jsonl | visigrid apply -
-  visigrid apply --atomic --expected-revision 42 ops.jsonl
-  visigrid apply --wait --wait-timeout 30 ops.jsonl")]
+  vgrid apply ops.jsonl
+  vgrid apply --session abc123 ops.jsonl
+  cat ops.jsonl | vgrid apply -
+  vgrid apply --atomic --expected-revision 42 ops.jsonl
+  vgrid apply --wait --wait-timeout 30 ops.jsonl")]
     Apply {
         /// Operations file (JSONL format, or - for stdin)
         ops: String,
@@ -387,9 +387,9 @@ Examples:
     /// Query cell state from a running session
     #[command(after_help = "\
 Examples:
-  visigrid inspect A1
-  visigrid inspect A1:B10 --json
-  visigrid inspect --session abc123 --sheet 1 A1:C5")]
+  vgrid inspect A1
+  vgrid inspect A1:B10 --json
+  vgrid inspect --session abc123 --sheet 1 A1:C5")]
     Inspect {
         /// Cell or range to inspect (e.g., A1, A1:B10, or 'workbook')
         range: String,
@@ -504,9 +504,9 @@ Claude Code setup:
     /// Show session server statistics (health check)
     #[command(after_help = "\
 Examples:
-  visigrid stats
-  visigrid stats --session abc123
-  visigrid stats --json")]
+  vgrid stats
+  vgrid stats --session abc123
+  vgrid stats --json")]
     Stats {
         /// Session ID (prefix match supported; auto-selects if only one session)
         #[arg(long)]
@@ -520,10 +520,10 @@ Examples:
     /// View a live session (read-only grid snapshot)
     #[command(after_help = "\
 Examples:
-  visigrid view
-  visigrid view --range A1:K20
-  visigrid view --session abc123 --sheet 1
-  visigrid view --follow")]
+  vgrid view
+  vgrid view --range A1:K20
+  vgrid view --session abc123 --sheet 1
+  vgrid view --follow")]
     View {
         /// Session ID (prefix match supported; auto-selects if only one session)
         #[arg(long)]
@@ -549,22 +549,22 @@ Examples:
     /// View a file in the terminal — CSV, TSV, XLSX, ODS, .sheet
     #[command(after_help = "\
 Examples:
-  visigrid peek data.csv
-  visigrid peek sales.tsv --headers
-  visigrid peek report.xlsx                      # Excel workbook (multi-tab)
-  visigrid peek report.xlsx --sheet summary       # open specific sheet
-  visigrid peek data.ods                          # OpenDocument spreadsheet
-  visigrid peek report.xlsx --recompute           # recompute formulas (slow)
-  visigrid peek recon.sheet                      # .sheet workbook (multi-tab)
-  visigrid peek recon.sheet --sheet summary       # open specific sheet
-  visigrid peek huge.csv --max-rows 10000
-  visigrid peek data.csv --max-rows 0 --force   # load all rows
-  visigrid peek data.csv --shape                 # print file shape and exit
-  visigrid peek data.csv --delimiter ';'         # semicolon-separated
-  visigrid peek data.csv --delimiter tab         # tab, comma, pipe, semicolon
-  visigrid peek data.csv --plain                 # print table to stdout
-  visigrid peek data.csv --no-tui               # same as --plain
-  visigrid peek data.csv --tui                  # force interactive (error if no TTY)
+  vgrid peek data.csv
+  vgrid peek sales.tsv --headers
+  vgrid peek report.xlsx                      # Excel workbook (multi-tab)
+  vgrid peek report.xlsx --sheet summary       # open specific sheet
+  vgrid peek data.ods                          # OpenDocument spreadsheet
+  vgrid peek report.xlsx --recompute           # recompute formulas (slow)
+  vgrid peek recon.sheet                      # .sheet workbook (multi-tab)
+  vgrid peek recon.sheet --sheet summary       # open specific sheet
+  vgrid peek huge.csv --max-rows 10000
+  vgrid peek data.csv --max-rows 0 --force   # load all rows
+  vgrid peek data.csv --shape                 # print file shape and exit
+  vgrid peek data.csv --delimiter ';'         # semicolon-separated
+  vgrid peek data.csv --delimiter tab         # tab, comma, pipe, semicolon
+  vgrid peek data.csv --plain                 # print table to stdout
+  vgrid peek data.csv --no-tui               # same as --plain
+  vgrid peek data.csv --tui                  # force interactive (error if no TTY)
 
 TTY behavior:
   Default: interactive TUI when stdin+stdout are TTY, otherwise prints plain preview.
@@ -902,10 +902,10 @@ enum SheetCommands {
     /// Build a .sheet file from a Lua script (replacement semantics)
     #[command(after_help = "\
 Examples:
-  visigrid sheet apply model.sheet --lua build.lua
-  visigrid sheet apply model.sheet --lua build.lua --verify v1:42:abc123...
-  visigrid sheet apply model.sheet --lua build.lua --dry-run
-  visigrid sheet apply model.sheet --lua build.lua --json
+  vgrid sheet apply model.sheet --lua build.lua
+  vgrid sheet apply model.sheet --lua build.lua --verify v1:42:abc123...
+  vgrid sheet apply model.sheet --lua build.lua --dry-run
+  vgrid sheet apply model.sheet --lua build.lua --json
 
 The Lua script builds the sheet from scratch using:
   set(cell, value)     -- set cell value or formula
@@ -948,24 +948,24 @@ Example Lua script:
     /// Inspect cells/ranges in a spreadsheet file
     #[command(after_help = "\
 Examples:
-  visigrid sheet inspect model.sheet A1
-  visigrid sheet inspect model.sheet --sheet summary C40 --value
-  visigrid sheet inspect data.xlsx --sheets --json
-  visigrid sheet inspect data.xlsx --sheet Invoices C2 --json
-  visigrid sheet inspect data.csv --headers --non-empty --ndjson
-  visigrid sheet inspect model.sheet A1:D10
-  visigrid sheet inspect model.sheet --workbook
-  visigrid sheet inspect model.sheet A1 --json
-  visigrid sheet inspect model.sheet A1 --include-style
-  visigrid sheet inspect model.sheet --sheets --json
-  visigrid sheet inspect model.sheet --sheet 1 A1:M100 --json
-  visigrid sheet inspect model.sheet --sheet Forecast --non-empty --json
+  vgrid sheet inspect model.sheet A1
+  vgrid sheet inspect model.sheet --sheet summary C40 --value
+  vgrid sheet inspect data.xlsx --sheets --json
+  vgrid sheet inspect data.xlsx --sheet Invoices C2 --json
+  vgrid sheet inspect data.csv --headers --non-empty --ndjson
+  vgrid sheet inspect model.sheet A1:D10
+  vgrid sheet inspect model.sheet --workbook
+  vgrid sheet inspect model.sheet A1 --json
+  vgrid sheet inspect model.sheet A1 --include-style
+  vgrid sheet inspect model.sheet --sheets --json
+  vgrid sheet inspect model.sheet --sheet 1 A1:M100 --json
+  vgrid sheet inspect model.sheet --sheet Forecast --non-empty --json
 
 Formula evaluation (--calc):
-  visigrid sheet inspect data.csv --calc \"SUM(A:A)\"
-  visigrid sheet inspect data.csv --headers --calc \"SUM(Amount)\"
-  visigrid sheet inspect data.csv --calc \"SUM(A:A)\" --calc \"AVERAGE(B:B)\"
-  visigrid sheet inspect data.xlsx --sheet Invoices --headers --calc \"SUM([WO Number])\"")]
+  vgrid sheet inspect data.csv --calc \"SUM(A:A)\"
+  vgrid sheet inspect data.csv --headers --calc \"SUM(Amount)\"
+  vgrid sheet inspect data.csv --calc \"SUM(A:A)\" --calc \"AVERAGE(B:B)\"
+  vgrid sheet inspect data.xlsx --sheet Invoices --headers --calc \"SUM([WO Number])\"")]
     Inspect {
         /// Path to spreadsheet file (.sheet, .xlsx, .csv, .tsv)
         file: PathBuf,
@@ -1032,8 +1032,8 @@ Formula evaluation (--calc):
     /// Verify a .sheet file's semantic fingerprint
     #[command(after_help = "\
 Examples:
-  visigrid sheet verify model.sheet                          # uses embedded expected fingerprint
-  visigrid sheet verify model.sheet --fingerprint v1:42:abc  # explicit fingerprint
+  vgrid sheet verify model.sheet                          # uses embedded expected fingerprint
+  vgrid sheet verify model.sheet --fingerprint v1:42:abc  # explicit fingerprint
 
 Exit codes:
   0  Verified (fingerprint matches)
@@ -1051,8 +1051,8 @@ Exit codes:
     /// Compute and print a .sheet file's fingerprint
     #[command(after_help = "\
 Examples:
-  visigrid sheet fingerprint model.sheet
-  visigrid sheet fingerprint model.sheet --json")]
+  vgrid sheet fingerprint model.sheet
+  vgrid sheet fingerprint model.sheet --json")]
     Fingerprint {
         /// Path to .sheet file
         file: PathBuf,
@@ -2567,7 +2567,7 @@ fn cmd_diff(
 
     if left_is_stdin && right_is_stdin {
         return Err(CliError::args("cannot read both sides from stdin")
-            .with_hint("provide at least one file path: visigrid diff - file.csv --key id"));
+            .with_hint("provide at least one file path: vgrid diff - file.csv --key id"));
     }
 
     // Parse export specs early so invalid specs fail fast
@@ -4692,14 +4692,14 @@ fn resolve_session(session_id: Option<&str>) -> Result<session::DiscoveryFile, C
             session::find_session(id)
                 .map_err(|e| CliError::args(e.to_string()))?
                 .ok_or_else(|| CliError::args(format!("session '{}' not found", id))
-                    .with_hint("use 'visigrid sessions' to list available sessions"))
+                    .with_hint("use 'vgrid sessions' to list available sessions"))
         }
         None => {
             if sessions.len() == 1 {
                 Ok(sessions.into_iter().next().unwrap())
             } else {
                 Err(CliError::args(format!("{} sessions found; specify --session", sessions.len()))
-                    .with_hint("use 'visigrid sessions' to list available sessions"))
+                    .with_hint("use 'vgrid sessions' to list available sessions"))
             }
         }
     }
@@ -6149,4 +6149,47 @@ fn cmd_sheet_import(
     }
 
     Ok(())
+}
+
+/// The binary is `vgrid`. The help text has to say so.
+///
+/// `visigrid` is the GUI and does not accept these arguments, so an example
+/// beginning `visigrid sheet inspect ...` is one an agent can copy, run, and
+/// get "Unknown option" from. The rename landed in February 2026 and 88 help
+/// examples in this file kept the old name until August — six months of
+/// telling every `--help` reader to run the wrong program, which nothing
+/// caught because help text is not executed.
+#[cfg(test)]
+mod help_examples_name_the_right_binary {
+    /// Subcommands as clap knows them. An example that pairs the old binary
+    /// name with any of these is an instruction to run something that fails.
+    const SUBCOMMANDS: &[&str] = &[
+        "calc", "convert", "list-functions", "open", "replay", "ai", "diff",
+        "sessions", "attach", "apply", "inspect", "pair", "save", "serve",
+        "mcp", "stats", "view", "peek", "login", "publish", "fill", "sheet",
+        "hub", "pipeline", "fetch", "parse", "recon", "export", "sign",
+        "hash", "sign-payload", "verify", "scripts", "runs",
+    ];
+
+    #[test]
+    fn no_help_example_invokes_the_gui_binary() {
+        let source = include_str!("main.rs");
+        let stale: Vec<&str> = source
+            .lines()
+            // Help examples live in string literals. A comment that mentions
+            // the old name — this test's own doc comment, for one — is not an
+            // instruction to anybody, so it does not count.
+            .filter(|line| !line.trim_start().starts_with("//"))
+            .filter(|line| {
+                SUBCOMMANDS
+                    .iter()
+                    .any(|sub| line.contains(&format!("visigrid {sub}")))
+            })
+            .collect();
+        assert!(
+            stale.is_empty(),
+            "help examples must invoke `vgrid`, not the `visigrid` GUI binary:\n{}",
+            stale.join("\n")
+        );
+    }
 }

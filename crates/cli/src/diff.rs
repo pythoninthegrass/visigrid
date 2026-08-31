@@ -1,4 +1,4 @@
-// Reconciliation logic for `visigrid diff`
+// Reconciliation logic for `vgrid diff`
 // Pure functions: two datasets in, matched/unmatched/diff rows out.
 // No IO, no clap, no formatting.
 
