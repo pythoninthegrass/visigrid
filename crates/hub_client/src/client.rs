@@ -218,6 +218,33 @@ impl HubClient {
         Ok(datasets)
     }
 
+    /// List repos visible to this token.
+    pub fn list_repos(&self) -> Result<Vec<RepoInfo>, HubError> {
+        let url = format!("{}/api/desktop/repos", self.api_base);
+        let resp = self.get(&url)?;
+        let json: serde_json::Value = resp.json().map_err(|e| HubError::Parse(e.to_string()))?;
+        let repos = json.as_array()
+            .unwrap_or(&vec![])
+            .iter()
+            .filter_map(|r| {
+                Some(RepoInfo {
+                    owner: r["owner"].as_str()?.to_string(),
+                    slug: r["slug"].as_str()?.to_string(),
+                    name: r["name"].as_str()?.to_string(),
+                })
+            })
+            .collect();
+        Ok(repos)
+    }
+
+    /// Download a revision's bytes.
+    pub fn download_revision(&self, revision_id: &str) -> Result<Vec<u8>, HubError> {
+        let url = format!("{}/api/desktop/revisions/{}/download", self.api_base, revision_id);
+        let resp = self.get(&url)?;
+        let bytes = resp.bytes().map_err(|e| HubError::Network(e.to_string()))?;
+        Ok(bytes.to_vec())
+    }
+
     /// Get current dataset status (latest revision info for idempotency).
     pub fn get_dataset_status(&self, dataset_id: &str) -> Result<DatasetStatus, HubError> {
         let url = format!("{}/api/desktop/datasets/{}/status", self.api_base, dataset_id);
